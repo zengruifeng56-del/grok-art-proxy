@@ -5,8 +5,9 @@ export function initVideoGen() {
 
     // Listen for image selection
     bus.on('image-selected', (data) => {
-        // Switch tab (handled by main app, but we need to update UI)
-        document.querySelector('.tab-btn[data-tab="video"]').click();
+        // Switch tab
+        const tab = document.querySelector('.tab-btn[data-tab="video"]');
+        if (tab) tab.click();
 
         // Update form
         document.getElementById('video-url').value = data.url;
@@ -19,7 +20,7 @@ export function initVideoGen() {
             <img src="${imgSrc}" alt="已选择">
             <div>
                 <h3>已选择图片</h3>
-                <p><strong>提示词:</strong> ${data.prompt}</p>
+                <p><strong>提示词:</strong> ${escapeHtml(data.prompt || '')}</p>
                 <p><strong>尺寸:</strong> ${data.width}x${data.height}</p>
                 <p><strong>ID:</strong> ${data.job_id}</p>
             </div>
@@ -79,8 +80,77 @@ function showResult(url) {
     result.innerHTML = `
         <h3 style="color:var(--color-success); margin-bottom:15px;">生成成功</h3>
         <video controls autoplay loop src="${url}"></video>
-        <div style="margin-top:20px;">
-            <a href="${url}" target="_blank" class="btn btn-secondary">下载视频</a>
+        <div style="margin-top:20px; display:flex; justify-content:center; gap:10px; flex-wrap:wrap;">
+            <button id="btn-video-download" class="btn btn-secondary">下载视频</button>
+            <a href="${url}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary">新窗口播放</a>
         </div>
     `;
+
+    const downloadBtn = document.getElementById('btn-video-download');
+    if (downloadBtn) {
+        downloadBtn.addEventListener('click', () => {
+            downloadVideo(url);
+        });
+    }
+}
+
+async function downloadVideo(url) {
+    const downloadBtn = document.getElementById('btn-video-download');
+    if (downloadBtn) {
+        downloadBtn.disabled = true;
+        downloadBtn.textContent = '下载中...';
+    }
+
+    try {
+        const res = await fetch(url);
+        if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`);
+        }
+
+        const blob = await res.blob();
+        const ext = getVideoExtension(blob, url);
+        const fileName = `grok-video-${Date.now()}.${ext}`;
+        triggerBlobDownload(blob, fileName);
+        log('video-log', '视频下载已开始', 'success');
+    } catch (error) {
+        log('video-log', `视频下载失败: ${error?.message || String(error)}`, 'error');
+        window.open(url, '_blank', 'noopener,noreferrer');
+    } finally {
+        if (downloadBtn) {
+            downloadBtn.disabled = false;
+            downloadBtn.textContent = '下载视频';
+        }
+    }
+}
+
+function getVideoExtension(blob, fallbackUrl = '') {
+    const t = String(blob?.type || '').toLowerCase();
+    if (t.includes('mp4')) return 'mp4';
+    if (t.includes('webm')) return 'webm';
+    if (t.includes('quicktime') || t.includes('mov')) return 'mov';
+
+    const m = String(fallbackUrl).match(/\.([a-zA-Z0-9]+)(?:$|\?)/);
+    if (m && m[1]) return m[1].toLowerCase();
+    return 'mp4';
+}
+
+function triggerBlobDownload(blob, filename) {
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objectUrl;
+    a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+}
+
+function escapeHtml(value) {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }

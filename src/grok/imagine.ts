@@ -1,4 +1,5 @@
 import { getWebSocketHeaders, buildCookie } from "./headers";
+import WebSocket, { type RawData } from "ws";
 
 const WS_URL = "wss://grok.com/ws/imagine/listen";
 
@@ -120,40 +121,47 @@ async function connectAndReceive(
 ): Promise<ImageResult[]> {
   const cookie = buildCookie(sso, sso_rw);
   const headers = getWebSocketHeaders(cookie);
-
-  // Use fetch to establish WebSocket connection (Cloudflare Workers way)
-  const response = await fetch(WS_URL.replace("wss://", "https://"), {
-    headers: {
-      ...headers,
-      Upgrade: "websocket",
-    },
-  });
-
-  const ws = response.webSocket;
-  if (!ws) {
-    throw new Error(`WebSocket upgrade failed: ${response.status}`);
-  }
-
-  ws.accept();
-
-  // Send request immediately after accept (connection is already open)
-  const request = buildRequest(prompt, aspectRatio, enableNsfw, isScroll);
-  ws.send(JSON.stringify(request));
-
   return new Promise((resolve, reject) => {
     const results: ImageResult[] = [];
     const receivedImages: Map<string, ImageResult> = new Map();
     const completedJobs = new Set<string>();
     const failedJobs = new Set<string>();
+    const emittedJobs = new Set<string>();
+    const ws = new WebSocket(WS_URL, { headers });
+    let settled = false;
+
+    const resolveOnce = (value: ImageResult[]) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+      }
+      resolve(value);
+    };
+
+    const rejectOnce = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+      }
+      reject(error);
+    };
 
     const timeout = setTimeout(() => {
-      ws.close();
-      resolve(results);
+      resolveOnce(results);
     }, timeoutMs);
 
-    ws.addEventListener("message", (event: MessageEvent) => {
+    ws.on("open", () => {
+      const request = buildRequest(prompt, aspectRatio, enableNsfw, isScroll);
+      ws.send(JSON.stringify(request));
+    });
+
+    ws.on("message", (raw: RawData) => {
       try {
-        const data: WsMessage = JSON.parse(event.data as string);
+        const data: WsMessage = JSON.parse(rawToText(raw));
         const msgType = data.type;
 
         if (msgType === "json") {
@@ -199,26 +207,23 @@ async function connectAndReceive(
               receivedImages.set(jobId, result);
 
               // Only add to results when we receive full image
-              if (isFullImage && !result.moderated) {
+              if (isFullImage && !result.moderated && !emittedJobs.has(jobId)) {
+                emittedJobs.add(jobId);
                 results.push(result);
               }
             }
           }
         } else if (msgType === "error") {
           const errorMsg = data.message || "Unknown error";
-          clearTimeout(timeout);
-          ws.close();
-          reject(new Error(errorMsg));
+          rejectOnce(new Error(errorMsg));
           return;
         }
 
         // Check if batch is done (6 jobs completed or failed)
         const totalDone = completedJobs.size + failedJobs.size;
         if (totalDone >= 6) {
-          clearTimeout(timeout);
           setTimeout(() => {
-            ws.close();
-            resolve(results);
+            resolveOnce(results);
           }, 300);
         }
       } catch {
@@ -226,20 +231,26 @@ async function connectAndReceive(
       }
     });
 
-    ws.addEventListener("error", () => {
-      clearTimeout(timeout);
-      reject(new Error("WebSocket error"));
+    ws.on("error", () => {
+      rejectOnce(new Error("WebSocket error"));
     });
 
-    ws.addEventListener("close", (event: CloseEvent) => {
-      clearTimeout(timeout);
-      if (event.code === 1008 || event.code === 429) {
-        reject(new Error("Rate limited (429)"));
+    ws.on("close", (code: number) => {
+      if (settled) return;
+      if (code === 1008 || code === 429) {
+        rejectOnce(new Error("Rate limited (429)"));
       } else {
-        resolve(results);
+        resolveOnce(results);
       }
     });
   });
+}
+
+function rawToText(raw: RawData): string {
+  if (typeof raw === "string") return raw;
+  if (raw instanceof ArrayBuffer) return Buffer.from(raw).toString("utf8");
+  if (Array.isArray(raw)) return Buffer.concat(raw.map((part) => Buffer.from(part))).toString("utf8");
+  return raw.toString("utf8");
 }
 
 export async function* generateImages(

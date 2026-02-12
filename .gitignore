@@ -6,6 +6,7 @@ node_modules/
 
 # Environment variables (contains secrets)
 .dev.vars
+.env
 
 # Logs
 *.log
@@ -17,6 +18,7 @@ Thumbs.db
 
 # Build output
 dist/
+data/
 
 # IDE
 .idea/

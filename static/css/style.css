@@ -381,6 +381,36 @@ textarea {
   margin-top: 30px;
 }
 
+.image-actions-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.image-batch-toolbar {
+  display: none;
+  align-items: center;
+  gap: 10px;
+}
+
+.image-batch-toolbar.active {
+  display: flex;
+}
+
+.image-selected-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border: 2px solid #000;
+  background: #fff;
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+}
+
 .image-card {
   border: var(--border-thick);
   background: white;
@@ -399,6 +429,15 @@ textarea {
 .image-card.selected {
   border-color: var(--color-accent);
   outline: 4px solid var(--color-accent);
+}
+
+.image-card.batch-mode {
+  cursor: crosshair;
+}
+
+.image-card.batch-selected {
+  border-color: var(--color-success);
+  outline: 4px solid var(--color-success);
 }
 
 .image-card img {
@@ -420,6 +459,16 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
   font-weight: 600;
+}
+
+.image-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+}
+
+.image-download-btn {
+  flex: 1;
 }
 
 /* ========================================

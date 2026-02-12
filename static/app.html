@@ -209,6 +209,15 @@ Content-Type: application/json
             <div class="section">
                 <h2>输出结果</h2>
                 <div id="gen-log" class="log-container" style="height:100px; margin-bottom:20px;"></div>
+                <div class="image-actions-bar">
+                    <button id="btn-image-batch-mode" class="btn btn-secondary btn-sm">批量选择</button>
+                    <div id="image-batch-toolbar" class="image-batch-toolbar">
+                        <button id="btn-image-select-all" class="btn btn-secondary btn-sm">全选</button>
+                        <button id="btn-image-download-selected" class="btn btn-secondary btn-sm" disabled>
+                            下载已选 <span id="image-selected-count" class="image-selected-count">0</span>
+                        </button>
+                    </div>
+                </div>
 
                 <div id="image-grid" class="image-grid">
                     <!-- Images Rendered Here -->
@@ -277,6 +286,7 @@ Content-Type: application/json
         </section>
     </div>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script type="module" src="/js/app.js"></script>
 </body>
 

@@ -3,17 +3,22 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "db:migrate": "wrangler d1 migrations apply DB --remote",
+    "dev": "tsx watch src/server.ts",
+    "start": "node --import tsx src/server.ts",
+    "db:migrate": "node --import tsx src/migrate.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "hono": "^4.6.16"
+    "@hono/node-server": "^1.14.0",
+    "better-sqlite3": "^11.10.0",
+    "hono": "^4.6.16",
+    "tsx": "^4.20.3",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260124.0",
-    "typescript": "^5.7.3",
-    "wrangler": "^4.61.0"
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.15.21",
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.7.3"
   }
 }

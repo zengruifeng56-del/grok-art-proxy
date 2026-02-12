@@ -236,3 +236,37 @@ npm run dev
 ## License
 
 MIT
+
+## Docker 部署（Linux）
+
+> 本仓库已支持直接运行在 Linux + Docker（Node.js 运行时 + SQLite）。
+
+### 1) 配置环境变量
+
+```bash
+cp .env.example .env
+```
+
+至少修改以下项：
+
+- `AUTH_USERNAME`
+- `AUTH_PASSWORD`
+
+### 2) 启动服务
+
+```bash
+docker compose up -d --build
+```
+
+默认端口：`8787`
+
+### 3) 验证服务
+
+```bash
+curl http://127.0.0.1:8787/health
+```
+
+### 4) 数据持久化
+
+- SQLite 数据库默认路径：容器内 `/app/data/grok-art-proxy.db`
+- `docker-compose.yml` 已将宿主机 `./data` 挂载到容器 `/app/data`

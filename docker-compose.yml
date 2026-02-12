@@ -1,0 +1,17 @@
+services:
+  grok-art-proxy:
+    container_name: grok-art-proxy
+    build: .
+    ports:
+      - "${PORT:-8787}:8787"
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      PORT: 8787
+      DB_PATH: ${DB_PATH:-/app/data/grok-art-proxy.db}
+      AUTH_USERNAME: ${AUTH_USERNAME:-admin}
+      AUTH_PASSWORD: ${AUTH_PASSWORD:-change_me}
+      VIDEO_POSTER_PREVIEW: ${VIDEO_POSTER_PREVIEW:-true}
+      BUILD_SHA: ${BUILD_SHA:-docker}
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

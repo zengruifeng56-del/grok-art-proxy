@@ -1,70 +1,22 @@
+import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import type { Env } from "./env";
-import { tokenRoutes } from "./routes/tokens";
-import { imagineRoutes } from "./routes/imagine";
-import { proxyRoutes } from "./routes/proxy";
+import { apiAuthMiddleware } from "./middleware/api-auth";
 import { authRoutes, hasAuthCookie } from "./routes/auth";
 import { apiKeyRoutes } from "./routes/api-keys";
-import { imagesRoutes } from "./routes/v1/images";
-import { videosRoutes } from "./routes/v1/videos";
-import { modelsRoutes } from "./routes/v1/models";
+import { imagineRoutes } from "./routes/imagine";
+import { proxyRoutes } from "./routes/proxy";
+import { tokenRoutes } from "./routes/tokens";
 import { chatRoutes } from "./routes/v1/chat";
-import { apiAuthMiddleware } from "./middleware/api-auth";
+import { imagesRoutes } from "./routes/v1/images";
+import { modelsRoutes } from "./routes/v1/models";
+import { videosRoutes } from "./routes/v1/videos";
 
 const app = new Hono<{ Bindings: Env }>();
 
-function getAssets(env: Env): Fetcher | null {
-  const anyEnv = env as unknown as { ASSETS?: unknown };
-  const assets = anyEnv.ASSETS as { fetch?: unknown } | undefined;
-  return assets && typeof assets.fetch === "function" ? (assets as Fetcher) : null;
-}
-
 function getBuildSha(env: Env): string {
-  const v = String((env as unknown as Record<string, unknown>)?.BUILD_SHA ?? "").trim();
+  const v = String(env.BUILD_SHA ?? "").trim();
   return v || "dev";
-}
-
-function withResponseHeaders(res: Response, extra: Record<string, string>): Response {
-  const headers = new Headers(res.headers);
-  for (const [k, v] of Object.entries(extra)) headers.set(k, v);
-  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
-}
-
-async function fetchAsset(c: { env: Env; req: { url: string; raw: Request } }, pathname: string): Promise<Response> {
-  const assets = getAssets(c.env);
-  const buildSha = getBuildSha(c.env);
-
-  if (!assets) {
-    return new Response("Internal Server Error: missing ASSETS binding", {
-      status: 500,
-      headers: { "content-type": "text/plain; charset=utf-8", "x-grok-imagine-build": buildSha },
-    });
-  }
-
-  const url = new URL(c.req.url);
-  url.pathname = pathname;
-
-  try {
-    // Create a simple GET request for the asset
-    const res = await assets.fetch(url.toString());
-    const extra: Record<string, string> = { "x-grok-imagine-build": buildSha };
-
-    // Avoid caching UI files aggressively
-    const lower = pathname.toLowerCase();
-    if (lower.endsWith(".html") || lower.endsWith(".js") || lower.endsWith(".css")) {
-      extra["cache-control"] = "no-store, no-cache, must-revalidate";
-      extra["pragma"] = "no-cache";
-      extra["expires"] = "0";
-    }
-
-    return withResponseHeaders(res, extra);
-  } catch (err) {
-    console.error(`ASSETS fetch failed (${pathname}):`, err);
-    return new Response(`Internal Server Error: failed to fetch asset ${pathname}`, {
-      status: 500,
-      headers: { "content-type": "text/plain; charset=utf-8", "x-grok-imagine-build": buildSha },
-    });
-  }
 }
 
 // Check if authentication is required
@@ -89,10 +41,7 @@ function isLoginPagePath(pathname: string): boolean {
 
 // Check if path is a public proxy path (video/image proxy for API consumers)
 function isPublicProxyPath(pathname: string): boolean {
-  return (
-    pathname === "/api/proxy/video" ||
-    pathname.startsWith("/api/proxy/assets/")
-  );
+  return pathname === "/api/proxy/video" || pathname.startsWith("/api/proxy/assets/");
 }
 
 // Check if path uses API Key authentication (OpenAI compatible API)
@@ -103,9 +52,7 @@ function isApiKeyAuthPath(pathname: string): boolean {
 // Error handler
 app.onError((err, c) => {
   console.error("Unhandled error:", err);
-  const buildSha = getBuildSha(c.env as Env);
-  const res = c.text(`Internal Server Error`, 500);
-  return withResponseHeaders(res, { "x-grok-imagine-build": buildSha });
+  return c.text("Internal Server Error", 500);
 });
 
 // Auth middleware - runs on ALL requests
@@ -148,6 +95,20 @@ app.use("*", async (c, next) => {
   return next();
 });
 
+// Unified response headers
+app.use("*", async (c, next) => {
+  await next();
+
+  const pathname = new URL(c.req.url).pathname.toLowerCase();
+  c.header("x-grok-imagine-build", getBuildSha(c.env));
+
+  if (pathname.endsWith(".html") || pathname.endsWith(".js") || pathname.endsWith(".css")) {
+    c.header("cache-control", "no-store, no-cache, must-revalidate");
+    c.header("pragma", "no-cache");
+    c.header("expires", "0");
+  }
+});
+
 // Mount auth routes (before other API routes)
 app.route("/", authRoutes);
 
@@ -171,7 +132,7 @@ app.get("/health", (c) =>
   c.json({
     status: "healthy",
     service: "Grok Imagine",
-    runtime: "cloudflare-workers",
+    runtime: "node",
     build: { sha: getBuildSha(c.env) },
     auth_required: isAuthRequired(c.env),
     auth_configured: {
@@ -179,57 +140,31 @@ app.get("/health", (c) =>
       password: !!c.env.AUTH_PASSWORD,
     },
     bindings: {
-      db: Boolean((c.env as unknown as Record<string, unknown>)?.DB),
-      kv_cache: Boolean((c.env as unknown as Record<string, unknown>)?.KV_CACHE),
-      assets: Boolean(getAssets(c.env)),
+      db: Boolean(c.env.DB),
     },
   })
 );
 
 // Root -> login page (public) - index.html is the login page
-app.get("/", (c) => fetchAsset(c, "/index.html"));
+app.get("/", serveStatic({ path: "./static/index.html" }));
+app.get("/index.html", serveStatic({ path: "./static/index.html" }));
 
 // Main app (protected by middleware) - app.html is the main application
-app.get("/app.html", (c) => fetchAsset(c, "/app.html"));
+app.get("/app.html", serveStatic({ path: "./static/app.html" }));
 
-// CSS files - need to handle explicitly for auth check
-app.get("/css/*", (c) => {
-  const url = new URL(c.req.url);
-  return fetchAsset(c, url.pathname);
-});
+// Static assets
+app.use("/css/*", serveStatic({ root: "./static" }));
+app.use("/js/*", serveStatic({ root: "./static" }));
+app.use(
+  "/static/*",
+  serveStatic({
+    root: "./static",
+    rewriteRequestPath: (reqPath) => reqPath.replace(/^\/static/, ""),
+  })
+);
 
-// JS files - need to handle explicitly for auth check
-app.get("/js/*", (c) => {
-  const url = new URL(c.req.url);
-  return fetchAsset(c, url.pathname);
-});
+// 404 handler
+app.notFound((c) => c.text("Not Found", 404));
 
-// Static files
-app.get("/static/*", (c) => {
-  const url = new URL(c.req.url);
-  const pathname = url.pathname.replace(/^\/static\//, "/");
-  return fetchAsset(c, pathname);
-});
-
-// 404 handler - also protected by middleware
-app.notFound(async (c) => {
-  const assets = getAssets(c.env);
-  const buildSha = getBuildSha(c.env);
-
-  if (!assets) {
-    return withResponseHeaders(c.text("Not Found", 404), { "x-grok-imagine-build": buildSha });
-  }
-
-  try {
-    const res = await assets.fetch(c.req.raw);
-    return withResponseHeaders(res, { "x-grok-imagine-build": buildSha });
-  } catch {
-    return withResponseHeaders(c.text("Not Found", 404), { "x-grok-imagine-build": buildSha });
-  }
-});
-
-const handler: ExportedHandler<Env> = {
-  fetch: (request, env, ctx) => app.fetch(request, env, ctx),
-};
-
-export default handler;
+export { app };
+export default app;
