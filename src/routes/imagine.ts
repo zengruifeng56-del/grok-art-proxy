@@ -35,7 +35,7 @@ app.post("/api/imagine/generate", async (c) => {
   const db = c.env.DB;
 
   // Generate images with retry logic
-  const backgroundTask = (async () => {
+  void (async () => {
     const excludedTokenIds: string[] = [];
     let retryCount = 0;
     let totalCollected = 0;
@@ -156,12 +156,9 @@ app.post("/api/imagine/generate", async (c) => {
       await writeEvent("done", {});
     }
     await writer.close();
-  })();
-
-  // Use waitUntil if available to ensure background task completes
-  if (c.executionCtx?.waitUntil) {
-    c.executionCtx.waitUntil(backgroundTask);
-  }
+  })().catch((err) => {
+    console.error("imagine generate background task failed:", err);
+  });
 
   return new Response(stream.readable, {
     headers: {
@@ -210,7 +207,7 @@ app.post("/api/video/generate", async (c) => {
   const db = c.env.DB;
 
   // Generate video with retry logic
-  const backgroundTask = (async () => {
+  void (async () => {
     const excludedTokenIds: string[] = [];
     let retryCount = 0;
 
@@ -321,12 +318,9 @@ app.post("/api/video/generate", async (c) => {
     }
 
     await writer.close();
-  })();
-
-  // Use waitUntil if available
-  if (c.executionCtx?.waitUntil) {
-    c.executionCtx.waitUntil(backgroundTask);
-  }
+  })().catch((err) => {
+    console.error("video generate background task failed:", err);
+  });
 
   return new Response(stream.readable, {
     headers: {
@@ -362,7 +356,7 @@ app.post("/api/imagine/scroll", async (c) => {
   const db = c.env.DB;
 
   // Scroll with retry logic
-  const backgroundTask = (async () => {
+  void (async () => {
     const excludedTokenIds: string[] = [];
     let retryCount = 0;
     const imagesPerPage = 6;
@@ -436,12 +430,9 @@ app.post("/api/imagine/scroll", async (c) => {
 
     await writeEvent("done", {});
     await writer.close();
-  })();
-
-  // Use waitUntil if available
-  if (c.executionCtx?.waitUntil) {
-    c.executionCtx.waitUntil(backgroundTask);
-  }
+  })().catch((err) => {
+    console.error("imagine scroll background task failed:", err);
+  });
 
   return new Response(stream.readable, {
     headers: {
