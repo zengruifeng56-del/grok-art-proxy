@@ -14,10 +14,37 @@ import {
   getTokenStats,
   tokenRowToInfo,
   tokenRowToExport,
+  getGlobalCfClearance,
+  setGlobalCfClearance,
 } from "../repo/tokens";
 import { enableNsfw } from "../grok/nsfw";
 
 const app = new Hono<{ Bindings: Env }>();
+
+// Get global cf_clearance setting
+app.get("/api/settings/cf-clearance", async (c) => {
+  const cfClearance = await getGlobalCfClearance(c.env.DB);
+  return c.json({
+    success: true,
+    cf_clearance: cfClearance,
+  });
+});
+
+// Set global cf_clearance setting
+app.post("/api/settings/cf-clearance", async (c) => {
+  let cfClearance = "";
+  try {
+    const body = await c.req.json<{ cf_clearance?: string }>();
+    cfClearance = String(body.cf_clearance || "");
+  } catch {
+    cfClearance = "";
+  }
+  await setGlobalCfClearance(c.env.DB, cfClearance);
+  return c.json({
+    success: true,
+    message: "Global cf_clearance saved",
+  });
+});
 
 // List all tokens
 app.get("/api/tokens", async (c) => {

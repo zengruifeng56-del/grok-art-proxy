@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Env } from "../../env";
-import { getRandomToken, type TokenRow } from "../../repo/tokens";
+import { getRandomToken, getGlobalCfClearance, type TokenRow } from "../../repo/tokens";
 import { generateImages, type ImageUpdate } from "../../grok/imagine";
 import { incrementApiKeyUsage } from "../../repo/api-keys";
 import type { ApiAuthEnv } from "../../middleware/api-auth";
@@ -82,6 +82,7 @@ app.post("/generations", async (c) => {
   const count = Math.min(Math.max(1, n), 10);
 
   const db = c.env.DB;
+  const globalCfClearance = await getGlobalCfClearance(db);
   const collectedImages: Array<{ url?: string; b64_json?: string }> = [];
   const excludedTokenIds: string[] = [];
   let retryCount = 0;
@@ -126,7 +127,7 @@ app.post("/generations", async (c) => {
         aspectRatio,
         true, // enable_nsfw
         token.user_id,
-        token.cf_clearance
+        token.cf_clearance || globalCfClearance
       )) {
         if (update.type === "error") {
           const msg = update.message;

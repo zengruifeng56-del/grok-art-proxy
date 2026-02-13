@@ -7,12 +7,14 @@ let currentPage = 1;
 export async function initTokenManager() {
     // Initial Load
     await loadTokens();
+    await loadGlobalCfClearance();
 
     // Event Listeners
     document.getElementById('btn-import-tokens').onclick = importTokens;
     document.getElementById('btn-clear-tokens').onclick = clearAllTokens;
     document.getElementById('btn-nsfw-all').onclick = enableNsfwAll;
     document.getElementById('btn-export-tokens').onclick = exportTokens;
+    document.getElementById('btn-save-global-cf').onclick = saveGlobalCfClearance;
 
     // Listen for refresh requests
     bus.on('refresh-tokens', loadTokens);
@@ -27,6 +29,18 @@ async function loadTokens() {
         renderCurrentPage();
     } catch (e) {
         console.error('加载令牌失败', e);
+    }
+}
+
+async function loadGlobalCfClearance() {
+    try {
+        const data = await api('/api/settings/cf-clearance');
+        const input = document.getElementById('global-cf-clearance');
+        if (input) {
+            input.value = data.cf_clearance || '';
+        }
+    } catch (e) {
+        console.error('加载全局 cf_clearance 失败', e);
     }
 }
 
@@ -173,6 +187,31 @@ async function importTokens() {
     } finally {
         btn.disabled = false;
         btn.textContent = '导入数据';
+    }
+}
+
+async function saveGlobalCfClearance() {
+    const input = document.getElementById('global-cf-clearance');
+    const btn = document.getElementById('btn-save-global-cf');
+    const cfClearance = (input?.value || '').trim();
+
+    btn.disabled = true;
+    btn.textContent = '保存中...';
+
+    try {
+        const res = await api('/api/settings/cf-clearance', 'POST', {
+            cf_clearance: cfClearance,
+        });
+        if (res.success) {
+            alert('全局 cf_clearance 已保存');
+        } else {
+            alert(res.error || '保存失败');
+        }
+    } catch (e) {
+        alert('保存失败: ' + e.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Save cf_clearance';
     }
 }
 

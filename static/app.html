@@ -49,6 +49,23 @@
             </div>
 
             <div class="section">
+                <h2>Global cf_clearance</h2>
+                <div class="form-row">
+                    <div class="form-group" style="flex:2;">
+                        <label>Global cf_clearance (shared by all tokens)</label>
+                        <input type="text" id="global-cf-clearance" placeholder="Paste cf_clearance value here">
+                    </div>
+                    <div class="form-group" style="flex:0 0 auto; display:flex; align-items:flex-end;">
+                        <button id="btn-save-global-cf" class="btn btn-secondary">Save cf_clearance</button>
+                    </div>
+                </div>
+                <p style="margin-top:8px; color:#666; font-size:0.9rem;">
+                    Token-level cf_clearance has higher priority. Leave empty to clear global fallback.
+                </p>
+            </div>
+
+
+            <div class="section">
                 <h2>批量操作</h2>
                 <div class="form-group">
                     <label>导入令牌 (SSO 或 JSON 格式)</label>

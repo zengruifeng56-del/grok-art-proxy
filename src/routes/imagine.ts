@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Env } from "../env";
-import { getToken, getRandomToken, type TokenRow } from "../repo/tokens";
+import { getToken, getRandomToken, getGlobalCfClearance, type TokenRow } from "../repo/tokens";
 import { generateImages, type StreamUpdate } from "../grok/imagine";
 import { generateVideo, type VideoUpdate } from "../grok/video";
 
@@ -43,6 +43,7 @@ app.post("/api/imagine/generate", async (c) => {
 
   // Capture db reference before async context
   const db = c.env.DB;
+  const globalCfClearance = await getGlobalCfClearance(db);
 
   // Generate images with retry logic
   void (async () => {
@@ -80,6 +81,7 @@ app.post("/api/imagine/generate", async (c) => {
 
       try {
         const remainingCount = targetCount - totalCollected;
+        const effectiveCfClearance = token.cf_clearance || globalCfClearance;
 
         for await (const update of generateImages(
           token.sso,
@@ -89,7 +91,7 @@ app.post("/api/imagine/generate", async (c) => {
           aspect_ratio,
           enable_nsfw,
           token.user_id,
-          token.cf_clearance
+          effectiveCfClearance
         )) {
           if (update.type === "error") {
             const msg = update.message;
@@ -217,6 +219,7 @@ app.post("/api/video/generate", async (c) => {
 
   // Capture db reference before async context
   const db = c.env.DB;
+  const globalCfClearance = await getGlobalCfClearance(db);
 
   // Generate video with retry logic
   void (async () => {
@@ -252,12 +255,13 @@ app.post("/api/video/generate", async (c) => {
 
       try {
         let completed = false;
+        const effectiveCfClearance = token.cf_clearance || globalCfClearance;
 
         for await (const update of generateVideo(
           token.sso,
           token.sso_rw,
           token.user_id,
-          token.cf_clearance,
+          effectiveCfClearance,
           token.id,
           image_url,
           prompt,
@@ -366,6 +370,7 @@ app.post("/api/imagine/scroll", async (c) => {
 
   // Capture db reference before async context
   const db = c.env.DB;
+  const globalCfClearance = await getGlobalCfClearance(db);
 
   // Scroll with retry logic
   void (async () => {
@@ -393,6 +398,8 @@ app.post("/api/imagine/scroll", async (c) => {
       }
 
       try {
+        const effectiveCfClearance = token.cf_clearance || globalCfClearance;
+
         for await (const update of generateImages(
           token.sso,
           token.sso_rw,
@@ -401,7 +408,7 @@ app.post("/api/imagine/scroll", async (c) => {
           aspect_ratio,
           enable_nsfw,
           token.user_id,
-          token.cf_clearance
+          effectiveCfClearance
         )) {
           if (update.type === "error") {
             const msg = update.message;

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { streamChat } from "../../grok/chat";
-import { getRandomToken } from "../../repo/tokens";
+import { getRandomToken, getGlobalCfClearance } from "../../repo/tokens";
 import { incrementApiKeyUsage } from "../../repo/api-keys";
 import { getModelInfo } from "../../grok/models";
 import type { ApiAuthEnv } from "../../middleware/api-auth";
@@ -119,6 +119,7 @@ app.post("/completions", async (c) => {
   const posterPreview = c.env.VIDEO_POSTER_PREVIEW === "true";
 
   const db = c.env.DB;
+  const globalCfClearance = await getGlobalCfClearance(db);
   const excludedTokenIds: string[] = [];
   let retryCount = 0;
 
@@ -169,7 +170,7 @@ app.post("/completions", async (c) => {
               baseUrl, // baseUrl for building full proxy URLs
               posterPreview, // video poster preview
               token.user_id,
-              token.cf_clearance
+              token.cf_clearance || globalCfClearance
             )) {
               if (update.type === "error") {
                 const msg = update.message || "";
@@ -278,7 +279,7 @@ app.post("/completions", async (c) => {
         baseUrl, // baseUrl for building full proxy URLs
         posterPreview, // video poster preview
         token.user_id,
-        token.cf_clearance
+        token.cf_clearance || globalCfClearance
       )) {
         if (update.type === "error") {
           const msg = update.message || "";

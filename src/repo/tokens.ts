@@ -348,3 +348,47 @@ export async function getTokenStats(db: Env["DB"]): Promise<{ total: number; act
     active: active?.c ?? 0,
   };
 }
+
+export async function getGlobalCfClearance(db: Env["DB"]): Promise<string> {
+  const direct = await dbFirst<{ value: string }>(
+    db,
+    "SELECT value FROM settings WHERE key = ?",
+    ["cf_clearance"]
+  );
+
+  if (direct?.value) {
+    return String(direct.value).trim();
+  }
+
+  // Backward compatibility: support legacy JSON settings payload.
+  const legacy = await dbFirst<{ value: string }>(
+    db,
+    "SELECT value FROM settings WHERE key = ?",
+    ["global"]
+  );
+
+  if (!legacy?.value) {
+    return "";
+  }
+
+  try {
+    const parsed = JSON.parse(legacy.value) as Record<string, unknown>;
+    return String(parsed.cf_clearance || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+export async function setGlobalCfClearance(db: Env["DB"], cfClearance: string): Promise<void> {
+  const value = cfClearance.trim();
+  const now = nowMs();
+  await dbRun(
+    db,
+    `INSERT INTO settings (key, value, updated_at)
+     VALUES ('cf_clearance', ?, ?)
+     ON CONFLICT(key) DO UPDATE SET
+       value = excluded.value,
+       updated_at = excluded.updated_at`,
+    [value, now]
+  );
+}

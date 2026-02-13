@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Env } from "../env";
-import { getRandomToken, getToken } from "../repo/tokens";
+import { getRandomToken, getToken, getGlobalCfClearance } from "../repo/tokens";
 
 const ASSETS_BASE = "https://assets.grok.com";
 
@@ -54,9 +54,15 @@ proxyRoutes.get("/api/proxy/assets/*", async (c) => {
   if (!token) {
     return c.json({ success: false, error: "No available tokens" }, 503);
   }
+  const globalCfClearance = await getGlobalCfClearance(c.env.DB);
 
   const targetUrl = `${ASSETS_BASE}${assetPath}`;
-  const headers = buildProxyHeaders(token.sso, token.sso_rw, token.user_id, token.cf_clearance);
+  const headers = buildProxyHeaders(
+    token.sso,
+    token.sso_rw,
+    token.user_id,
+    token.cf_clearance || globalCfClearance
+  );
 
   try {
     const response = await fetch(targetUrl, {
@@ -118,8 +124,14 @@ proxyRoutes.get("/api/proxy/video", async (c) => {
   if (!token) {
     return c.json({ success: false, error: "No available tokens" }, 503);
   }
+  const globalCfClearance = await getGlobalCfClearance(c.env.DB);
 
-  const headers = buildProxyHeaders(token.sso, token.sso_rw, token.user_id, token.cf_clearance);
+  const headers = buildProxyHeaders(
+    token.sso,
+    token.sso_rw,
+    token.user_id,
+    token.cf_clearance || globalCfClearance
+  );
 
   try {
     const response = await fetch(videoUrl, {

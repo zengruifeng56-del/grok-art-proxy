@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Env } from "../../env";
-import { getRandomToken, type TokenRow } from "../../repo/tokens";
+import { getRandomToken, getGlobalCfClearance, type TokenRow } from "../../repo/tokens";
 import { generateVideo, type VideoUpdate } from "../../grok/video";
 import { incrementApiKeyUsage } from "../../repo/api-keys";
 import type { ApiAuthEnv } from "../../middleware/api-auth";
@@ -94,6 +94,7 @@ app.post("/generations", async (c) => {
   }
 
   const db = c.env.DB;
+  const globalCfClearance = await getGlobalCfClearance(db);
 
   // Try to extract post_id from URL
   const postId = extractPostIdFromUrl(image_url);
@@ -131,7 +132,7 @@ app.post("/generations", async (c) => {
         token.sso,
         token.sso_rw,
         token.user_id,
-        token.cf_clearance,
+        token.cf_clearance || globalCfClearance,
         token.id,
         image_url,
         prompt,
