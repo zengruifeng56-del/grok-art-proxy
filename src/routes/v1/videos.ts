@@ -9,6 +9,16 @@ const app = new Hono<ApiAuthEnv>();
 
 const MAX_RETRIES = 5;
 
+function isRetryableTokenError(message: string): boolean {
+  const lowered = message.toLowerCase();
+  return (
+    lowered.includes("429") ||
+    lowered.includes("rate limited") ||
+    lowered.includes("cloudflare challenge") ||
+    lowered.includes("upstream 403")
+  );
+}
+
 interface VideoGenerationRequest {
   model?: string;
   image_url: string;
@@ -135,7 +145,7 @@ app.post("/generations", async (c) => {
           const msg = update.message;
 
           // Check for 429 rate limit
-          if (msg.includes("429") || msg.includes("Rate limited")) {
+          if (isRetryableTokenError(msg)) {
             excludedTokenIds.push(token.id);
             retryCount++;
             lastError = msg;
@@ -180,7 +190,7 @@ app.post("/generations", async (c) => {
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
 
-      if (message.includes("429") || message.includes("Rate limited")) {
+      if (isRetryableTokenError(message)) {
         excludedTokenIds.push(token.id);
         retryCount++;
         lastError = message;

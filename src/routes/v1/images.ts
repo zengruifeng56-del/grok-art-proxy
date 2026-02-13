@@ -124,7 +124,9 @@ app.post("/generations", async (c) => {
         prompt,
         remainingCount,
         aspectRatio,
-        true // enable_nsfw
+        true, // enable_nsfw
+        token.user_id,
+        token.cf_clearance
       )) {
         if (update.type === "error") {
           const msg = update.message;

@@ -36,6 +36,7 @@ export interface TokenExport {
   sso_rw: string;
   name: string;
   "x-userid": string;
+  cf_clearance: string;
 }
 
 function generateTokenId(sso: string): string {
@@ -68,6 +69,7 @@ export function tokenRowToExport(row: TokenRow): TokenExport {
     sso_rw: row.sso_rw,
     name: row.name,
     "x-userid": row.user_id,
+    cf_clearance: row.cf_clearance,
   };
 }
 

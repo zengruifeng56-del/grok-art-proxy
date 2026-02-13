@@ -10,6 +10,16 @@ const app = new Hono<HonoEnv>();
 
 const MAX_RETRIES = 5;
 
+function isRetryableTokenError(message: string): boolean {
+  const lowered = message.toLowerCase();
+  return (
+    lowered.includes("429") ||
+    lowered.includes("rate limited") ||
+    lowered.includes("cloudflare challenge") ||
+    lowered.includes("upstream 403")
+  );
+}
+
 // Image generation (SSE stream) with auto-retry on 429
 app.post("/api/imagine/generate", async (c) => {
   const body = await c.req.json<{
@@ -77,13 +87,15 @@ app.post("/api/imagine/generate", async (c) => {
           prompt,
           remainingCount,
           aspect_ratio,
-          enable_nsfw
+          enable_nsfw,
+          token.user_id,
+          token.cf_clearance
         )) {
           if (update.type === "error") {
             const msg = update.message;
 
             // Check for 429 rate limit
-            if (msg.includes("429") || msg.includes("Rate limited")) {
+            if (isRetryableTokenError(msg)) {
               excludedTokenIds.push(token.id);
               retryCount++;
 
@@ -132,7 +144,7 @@ app.post("/api/imagine/generate", async (c) => {
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
 
-        if (message.includes("429") || message.includes("Rate limited")) {
+        if (isRetryableTokenError(message)) {
           excludedTokenIds.push(token.id);
           retryCount++;
 
@@ -259,7 +271,7 @@ app.post("/api/video/generate", async (c) => {
             const msg = update.message;
 
             // Check for 429 rate limit
-            if (msg.includes("429") || msg.includes("Rate limited")) {
+            if (isRetryableTokenError(msg)) {
               excludedTokenIds.push(token.id);
               retryCount++;
 
@@ -298,7 +310,7 @@ app.post("/api/video/generate", async (c) => {
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
 
-        if (message.includes("429") || message.includes("Rate limited")) {
+        if (isRetryableTokenError(message)) {
           excludedTokenIds.push(token.id);
           retryCount++;
 
@@ -387,12 +399,14 @@ app.post("/api/imagine/scroll", async (c) => {
           prompt,
           targetCount,
           aspect_ratio,
-          enable_nsfw
+          enable_nsfw,
+          token.user_id,
+          token.cf_clearance
         )) {
           if (update.type === "error") {
             const msg = update.message;
 
-            if (msg.includes("429") || msg.includes("Rate limited")) {
+            if (isRetryableTokenError(msg)) {
               excludedTokenIds.push(token.id);
               retryCount++;
 
@@ -417,7 +431,7 @@ app.post("/api/imagine/scroll", async (c) => {
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
 
-        if (message.includes("429") || message.includes("Rate limited")) {
+        if (isRetryableTokenError(message)) {
           excludedTokenIds.push(token.id);
           retryCount++;
           continue;

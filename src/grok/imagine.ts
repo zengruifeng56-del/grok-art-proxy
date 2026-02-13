@@ -117,9 +117,11 @@ async function connectAndReceive(
   aspectRatio: string,
   enableNsfw: boolean,
   isScroll: boolean,
-  timeoutMs: number = 30000
+  timeoutMs: number = 30000,
+  user_id: string = "",
+  cf_clearance: string = ""
 ): Promise<ImageResult[]> {
-  const cookie = buildCookie(sso, sso_rw);
+  const cookie = buildCookie(sso, sso_rw, user_id, cf_clearance);
   const headers = getWebSocketHeaders(cookie);
   return new Promise((resolve, reject) => {
     const results: ImageResult[] = [];
@@ -259,7 +261,9 @@ export async function* generateImages(
   prompt: string,
   count: number,
   aspectRatio: string,
-  enableNsfw: boolean
+  enableNsfw: boolean,
+  user_id: string = "",
+  cf_clearance: string = ""
 ): AsyncGenerator<StreamUpdate> {
   const collectedJobs = new Set<string>();
   const maxPages = Math.ceil(count / 6) + 2;
@@ -286,7 +290,9 @@ export async function* generateImages(
         aspectRatio,
         enableNsfw,
         isScroll,
-        30000
+        30000,
+        user_id,
+        cf_clearance
       );
 
       for (const img of images) {

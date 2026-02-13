@@ -179,7 +179,9 @@ async function* streamTextChat(
   ssoRw: string,
   text: string,
   modelId: string,
-  showThinking: boolean = true
+  showThinking: boolean = true,
+  userId: string = "",
+  cfClearance: string = ""
 ): AsyncGenerator<ChatUpdate> {
   const modelInfo = toGrokModel(modelId);
   if (!modelInfo) {
@@ -187,7 +189,7 @@ async function* streamTextChat(
     return;
   }
 
-  const cookie = buildCookie(sso, ssoRw);
+  const cookie = buildCookie(sso, ssoRw, userId, cfClearance);
   const headers = getHeaders(cookie);
   const payload = buildPayload(text, modelInfo.grokModel, modelInfo.modelMode, false);
 
@@ -205,6 +207,30 @@ async function* streamTextChat(
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => "");
+    if (response.status === 403) {
+      const lowered = errorText.toLowerCase();
+      if (
+        lowered.includes("cloudflare") ||
+        lowered.includes("attention required") ||
+        lowered.includes("just a moment") ||
+        lowered.includes("<!doctype html")
+      ) {
+        yield {
+          type: "error",
+          message:
+            "Upstream 403 (Cloudflare challenge). 请检查 token 的 cf_clearance/user_id 是否有效，且与当前服务器出口环境匹配。",
+        };
+        return;
+      }
+    }
+
+    if (response.status === 403) {
+      yield {
+        type: "error",
+        message: "Upstream 403 forbidden. 请检查 token 是否失效或被风控。",
+      };
+      return;
+    }
     yield { type: "error", message: `HTTP ${response.status}: ${errorText.slice(0, 500)}` };
     return;
   }
@@ -305,7 +331,9 @@ async function* streamImageGeneration(
   ssoRw: string,
   prompt: string,
   aspectRatio: string = "1:1",
-  showThinking: boolean = true
+  showThinking: boolean = true,
+  userId: string = "",
+  cfClearance: string = ""
 ): AsyncGenerator<ChatUpdate> {
   yield { type: "token", content: "<think>\n" };
   yield { type: "token", content: "开始生成图片...\n" };
@@ -313,7 +341,7 @@ async function* streamImageGeneration(
   let imageUrls: string[] = [];
   let lastProgress = 0;
 
-  for await (const update of generateImages(sso, ssoRw, prompt, 4, aspectRatio, true)) {
+  for await (const update of generateImages(sso, ssoRw, prompt, 4, aspectRatio, true, userId, cfClearance)) {
     if (update.type === "progress") {
       // Only output when progress changes significantly
       if (update.completed_count > lastProgress) {
@@ -367,7 +395,9 @@ async function* streamVideoFromImage(
   tokenId: string,
   baseUrl: string,
   posterPreview: boolean = false,
-  showThinking: boolean = true
+  showThinking: boolean = true,
+  userId: string = "",
+  cfClearance: string = ""
 ): AsyncGenerator<ChatUpdate> {
   yield { type: "token", content: "<think>\n" };
   yield { type: "token", content: `使用图片: ${imageUrl}\n` };
@@ -386,8 +416,8 @@ async function* streamVideoFromImage(
   for await (const update of generateVideo(
     sso,
     ssoRw,
-    "", // user_id - not needed for basic generation
-    "", // cf_clearance - not needed for basic generation
+    userId,
+    cfClearance,
     tokenId,
     imageUrl,
     prompt,
@@ -443,7 +473,9 @@ async function* streamOneClickVideo(
   baseUrl: string,
   aspectRatio: string = "16:9",
   posterPreview: boolean = false,
-  showThinking: boolean = true
+  showThinking: boolean = true,
+  userId: string = "",
+  cfClearance: string = ""
 ): AsyncGenerator<ChatUpdate> {
   yield { type: "token", content: "<think>\n" };
   yield { type: "token", content: "开始一键生成视频...\n\n" };
@@ -454,7 +486,7 @@ async function* streamOneClickVideo(
   let imageUrl: string | null = null;
   let lastProgress = 0;
 
-  for await (const update of generateImages(sso, ssoRw, prompt, 1, aspectRatio, true)) {
+  for await (const update of generateImages(sso, ssoRw, prompt, 1, aspectRatio, true, userId, cfClearance)) {
     if (update.type === "progress") {
       if (update.completed_count > lastProgress) {
         lastProgress = update.completed_count;
@@ -503,8 +535,8 @@ async function* streamOneClickVideo(
   for await (const update of generateVideo(
     sso,
     ssoRw,
-    "",
-    "",
+    userId,
+    cfClearance,
     tokenId,
     imageUrl,
     prompt,
@@ -559,7 +591,9 @@ export async function* streamChat(
   showThinking: boolean = true,
   tokenId: string = "",
   baseUrl: string = "",
-  posterPreview: boolean = false
+  posterPreview: boolean = false,
+  userId: string = "",
+  cfClearance: string = ""
 ): AsyncGenerator<ChatUpdate> {
   const { text, imageUrls } = extractMessages(messages);
 
@@ -573,18 +607,29 @@ export async function* streamChat(
 
   // Handle grok-image model
   if (isImageModel(modelId)) {
-    yield* streamImageGeneration(sso, ssoRw, text, aspectRatio, showThinking);
+    yield* streamImageGeneration(sso, ssoRw, text, aspectRatio, showThinking, userId, cfClearance);
     return;
   }
 
   // Handle grok-video model (one-click video generation)
   if (isVideoModel(modelId)) {
-    yield* streamOneClickVideo(sso, ssoRw, text, tokenId, baseUrl, aspectRatio, posterPreview, showThinking);
+    yield* streamOneClickVideo(
+      sso,
+      ssoRw,
+      text,
+      tokenId,
+      baseUrl,
+      aspectRatio,
+      posterPreview,
+      showThinking,
+      userId,
+      cfClearance
+    );
     return;
   }
 
   // Handle text models
-  yield* streamTextChat(sso, ssoRw, text, modelId, showThinking);
+  yield* streamTextChat(sso, ssoRw, text, modelId, showThinking, userId, cfClearance);
 }
 
 /**
@@ -598,12 +643,25 @@ export async function chatCompletion(
   showThinking: boolean = true,
   tokenId: string = "",
   baseUrl: string = "",
-  posterPreview: boolean = false
+  posterPreview: boolean = false,
+  userId: string = "",
+  cfClearance: string = ""
 ): Promise<{ content: string; responseId: string } | { error: string }> {
   let content = "";
   let responseId = "";
 
-  for await (const update of streamChat(sso, ssoRw, messages, modelId, showThinking, tokenId, baseUrl, posterPreview)) {
+  for await (const update of streamChat(
+    sso,
+    ssoRw,
+    messages,
+    modelId,
+    showThinking,
+    tokenId,
+    baseUrl,
+    posterPreview,
+    userId,
+    cfClearance
+  )) {
     if (update.type === "error") {
       return { error: update.message || "Unknown error" };
     }

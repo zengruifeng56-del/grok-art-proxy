@@ -37,6 +37,17 @@ export interface VideoDone {
 
 export type VideoUpdate = VideoProgress | VideoResult | VideoError | VideoDone;
 
+function isCloudflareChallenge(status: number, body: string): boolean {
+  if (status !== 403) return false;
+  const lowered = body.toLowerCase();
+  return (
+    lowered.includes("cloudflare") ||
+    lowered.includes("attention required") ||
+    lowered.includes("just a moment") ||
+    lowered.includes("<!doctype html")
+  );
+}
+
 async function createMediaPost(
   imageUrl: string,
   cookie: string
@@ -171,6 +182,23 @@ export async function* generateVideo(
 
     if (!response.ok) {
       const text = await response.text();
+      if (isCloudflareChallenge(response.status, text)) {
+        yield {
+          type: "error",
+          message:
+            "Upstream 403 (Cloudflare challenge). Please refresh token cf_clearance/user_id and ensure they match the current server egress environment.",
+        };
+        return;
+      }
+
+      if (response.status === 403) {
+        yield {
+          type: "error",
+          message: "Upstream 403 forbidden. Please verify token validity.",
+        };
+        return;
+      }
+
       yield { type: "error", message: `HTTP ${response.status}: ${text.slice(0, 200)}` };
       return;
     }
