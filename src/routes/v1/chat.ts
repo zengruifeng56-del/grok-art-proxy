@@ -9,6 +9,20 @@ const app = new Hono<ApiAuthEnv>();
 
 const MAX_RETRIES = 5;
 
+function isRetryableTokenError(message: string): boolean {
+  const lowered = message.toLowerCase();
+  return (
+    lowered.includes("429") ||
+    lowered.includes("rate limited") ||
+    lowered.includes("rate limit") ||
+    lowered.includes("too many requests") ||
+    lowered.includes("cloudflare challenge") ||
+    lowered.includes("upstream 403") ||
+    lowered.includes("401") ||
+    lowered.includes("unauthorized")
+  );
+}
+
 interface ChatMessage {
   role: string;
   content: string | Array<{ type: string; text?: string; image_url?: { url: string } }>;
@@ -141,6 +155,9 @@ app.post("/completions", async (c) => {
             break;
           }
 
+          let shouldRetry = false;
+          let terminalError = "";
+
           try {
             for await (const update of streamChat(
               token.sso,
@@ -156,11 +173,15 @@ app.post("/completions", async (c) => {
             )) {
               if (update.type === "error") {
                 const msg = update.message || "";
-                if (msg.includes("429") || msg.includes("rate") || msg.includes("401")) {
-                  excludedTokenIds.push(token.id);
+                if (isRetryableTokenError(msg)) {
+                  if (!excludedTokenIds.includes(token.id)) {
+                    excludedTokenIds.push(token.id);
+                  }
                   retryCount++;
+                  shouldRetry = true;
                   break;
                 }
+                terminalError = msg;
                 controller.enqueue(
                   encoder.encode(sseChunk(responseId, model, `[Error: ${msg}]`, null, null))
                 );
@@ -178,10 +199,22 @@ app.post("/completions", async (c) => {
             }
 
             if (success) break;
+            if (terminalError) break;
+            if (shouldRetry) continue;
+
+            // Unexpected end without explicit done/error: stop to avoid endless retry loop.
+            controller.enqueue(
+              encoder.encode(
+                sseChunk(responseId, model, "[Error: Upstream stream ended unexpectedly]", null, null)
+              )
+            );
+            break;
           } catch (e) {
             const message = e instanceof Error ? e.message : String(e);
-            if (message.includes("429") || message.includes("rate")) {
-              excludedTokenIds.push(token.id);
+            if (isRetryableTokenError(message)) {
+              if (!excludedTokenIds.includes(token.id)) {
+                excludedTokenIds.push(token.id);
+              }
               retryCount++;
               continue;
             }
@@ -232,6 +265,8 @@ app.post("/completions", async (c) => {
       return createErrorResponse("No available tokens", 503);
     }
 
+    let shouldRetry = false;
+
     try {
       for await (const update of streamChat(
         token.sso,
@@ -247,10 +282,13 @@ app.post("/completions", async (c) => {
       )) {
         if (update.type === "error") {
           const msg = update.message || "";
-          if (msg.includes("429") || msg.includes("rate") || msg.includes("401")) {
-            excludedTokenIds.push(token.id);
+          if (isRetryableTokenError(msg)) {
+            if (!excludedTokenIds.includes(token.id)) {
+              excludedTokenIds.push(token.id);
+            }
             retryCount++;
             lastError = msg;
+            shouldRetry = true;
             break;
           }
           return createErrorResponse(msg, 500);
@@ -267,10 +305,14 @@ app.post("/completions", async (c) => {
       }
 
       if (success) break;
+      if (shouldRetry) continue;
+      return createErrorResponse("Upstream stream ended unexpectedly", 500);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      if (message.includes("429") || message.includes("rate")) {
-        excludedTokenIds.push(token.id);
+      if (isRetryableTokenError(message)) {
+        if (!excludedTokenIds.includes(token.id)) {
+          excludedTokenIds.push(token.id);
+        }
         retryCount++;
         lastError = message;
         continue;
