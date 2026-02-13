@@ -129,7 +129,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: Set Authentication Secrets
+      - name: Set Worker Secrets
         run: |
           if [ -n "${{ secrets.AUTH_USERNAME }}" ]; then
             echo "${{ secrets.AUTH_USERNAME }}" | npx wrangler secret put AUTH_USERNAME 2>/dev/null || \
@@ -139,6 +139,11 @@ jobs:
           if [ -n "${{ secrets.AUTH_PASSWORD }}" ]; then
             echo "${{ secrets.AUTH_PASSWORD }}" | npx wrangler secret put AUTH_PASSWORD 2>/dev/null || \
             echo "${{ secrets.AUTH_PASSWORD }}" | npx wrangler secret put AUTH_PASSWORD --force 2>/dev/null || true
+          fi
+
+          if [ -n "${{ secrets.XAI_API_KEY }}" ]; then
+            echo "${{ secrets.XAI_API_KEY }}" | npx wrangler secret put XAI_API_KEY 2>/dev/null || \
+            echo "${{ secrets.XAI_API_KEY }}" | npx wrangler secret put XAI_API_KEY --force 2>/dev/null || true
           fi
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
