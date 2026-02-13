@@ -146,12 +146,56 @@
             <div class="section">
                 <h2>API 使用说明</h2>
                 <div class="api-docs">
+                    <h3>模型目录与映射测试</h3>
+                    <div class="form-row" style="margin-top: 12px;">
+                        <div class="form-group">
+                            <label>类型筛选</label>
+                            <select id="model-type-filter">
+                                <option value="all">all</option>
+                                <option value="text">text</option>
+                                <option value="image">image</option>
+                                <option value="video">video</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="flex:2;">
+                            <label>可用模型</label>
+                            <select id="model-select"></select>
+                        </div>
+                        <div class="form-group" style="flex:0 0 auto; display:flex; align-items:flex-end;">
+                            <button id="btn-model-refresh" class="btn btn-secondary">刷新模型</button>
+                        </div>
+                    </div>
+                    <p style="margin-top:8px; color:#666; font-size:0.9rem;">
+                        点击“刷新模型”会尝试从 x.ai 拉取最新模型列表（需配置服务器环境变量 XAI_API_KEY）。
+                    </p>
+                    <div class="form-row">
+                        <div class="form-group" style="flex:2;">
+                            <label>映射测试（支持 * 通配）</label>
+                            <input type="text" id="model-resolve-input" placeholder="例如: grok-4* / grok-video* / grok-image-16_9">
+                        </div>
+                        <div class="form-group" style="flex:0 0 auto; display:flex; align-items:flex-end;">
+                            <button id="btn-model-resolve" class="btn">测试映射</button>
+                        </div>
+                    </div>
+                    <pre><code id="model-resolve-result">点击“刷新模型”加载目录，再输入模型名测试映射。</code></pre>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>连通关键词</label>
+                            <input type="text" id="model-test-keyword" value="MODEL_OK" placeholder="命中该关键词判定连通">
+                        </div>
+                        <div class="form-group" style="flex:0 0 auto; display:flex; align-items:flex-end;">
+                            <button id="btn-model-chat-test" class="btn btn-secondary">测试模型对话连通</button>
+                        </div>
+                    </div>
+                    <pre><code id="model-chat-test-result">点击“测试模型对话连通”执行短消息检测。</code></pre>
+
                     <h3>图片生成</h3>
                     <pre><code>POST /v1/images/generations
 Authorization: Bearer sk-xxxxxxxx
 Content-Type: application/json
 
 {
+  "model": "grok-image",
   "prompt": "a cute cat",
   "size": "1024x1024",
   "n": 1
@@ -163,9 +207,23 @@ Authorization: Bearer sk-xxxxxxxx
 Content-Type: application/json
 
 {
+  "model": "grok-video",
   "image_url": "https://...",
   "prompt": "camera pan left",
   "duration": 6
+}</code></pre>
+
+                    <h3>聊天（支持通配模型）</h3>
+                    <pre><code>POST /v1/chat/completions
+Authorization: Bearer sk-xxxxxxxx
+Content-Type: application/json
+
+{
+  "model": "grok-4*",
+  "messages": [
+    { "role": "user", "content": "hello" }
+  ],
+  "stream": true
 }</code></pre>
 
                     <h3>支持的尺寸</h3>

@@ -28,6 +28,15 @@ function createBindings(): Env {
   if (process.env.AUTH_PASSWORD) {
     env.AUTH_PASSWORD = process.env.AUTH_PASSWORD;
   }
+  if (process.env.XAI_API_KEY) {
+    env.XAI_API_KEY = process.env.XAI_API_KEY;
+  }
+  if (process.env.XAI_BASE_URL) {
+    env.XAI_BASE_URL = process.env.XAI_BASE_URL;
+  }
+  if (process.env.XAI_MODELS_CACHE_TTL_MS) {
+    env.XAI_MODELS_CACHE_TTL_MS = process.env.XAI_MODELS_CACHE_TTL_MS;
+  }
 
   return env;
 }

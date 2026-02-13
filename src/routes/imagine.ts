@@ -14,10 +14,31 @@ function isRetryableTokenError(message: string): boolean {
   const lowered = message.toLowerCase();
   return (
     lowered.includes("429") ||
+    lowered.includes("too many requests") ||
     lowered.includes("rate limited") ||
     lowered.includes("cloudflare challenge") ||
-    lowered.includes("upstream 403")
+    lowered.includes("upstream 403") ||
+    lowered.includes("401") ||
+    lowered.includes("unauthorized")
   );
+}
+
+function getRetryableErrorReason(message: string): string {
+  const lowered = message.toLowerCase();
+  if (lowered.includes("cloudflare challenge") || lowered.includes("upstream 403")) {
+    return "Cloudflare challenge (403)";
+  }
+  if (
+    lowered.includes("429") ||
+    lowered.includes("rate limited") ||
+    lowered.includes("too many requests")
+  ) {
+    return "Rate limited (429)";
+  }
+  if (lowered.includes("401") || lowered.includes("unauthorized")) {
+    return "Unauthorized (401)";
+  }
+  return "Retryable upstream error";
 }
 
 // Image generation (SSE stream) with auto-retry on 429
@@ -51,6 +72,7 @@ app.post("/api/imagine/generate", async (c) => {
     let retryCount = 0;
     let totalCollected = 0;
     const targetCount = count;
+    let lastRetryableError = "";
 
     while (retryCount < MAX_RETRIES && totalCollected < targetCount) {
       // Get token (excluding rate-limited ones)
@@ -68,7 +90,7 @@ app.post("/api/imagine/generate", async (c) => {
         if (excludedTokenIds.length > 0) {
           await writeEvent("error", {
             type: "error",
-            message: `All tokens rate limited (tried ${excludedTokenIds.length} tokens)`,
+            message: `All tokens failed with retryable errors (tried ${excludedTokenIds.length} tokens)`,
           });
         } else {
           await writeEvent("error", {
@@ -81,7 +103,7 @@ app.post("/api/imagine/generate", async (c) => {
 
       try {
         const remainingCount = targetCount - totalCollected;
-        const effectiveCfClearance = token.cf_clearance || globalCfClearance;
+        const effectiveCfClearance = globalCfClearance || token.cf_clearance;
 
         for await (const update of generateImages(
           token.sso,
@@ -98,12 +120,14 @@ app.post("/api/imagine/generate", async (c) => {
 
             // Check for 429 rate limit
             if (isRetryableTokenError(msg)) {
+              lastRetryableError = msg;
               excludedTokenIds.push(token.id);
               retryCount++;
+              const reason = getRetryableErrorReason(msg);
 
               await writeEvent("info", {
                 type: "info",
-                message: `Token rate limited, switching to another (attempt ${retryCount}/${MAX_RETRIES})`,
+                message: `Retryable error: ${reason}, switching token (attempt ${retryCount}/${MAX_RETRIES})`,
               });
 
               // Break inner loop to retry with new token
@@ -147,12 +171,14 @@ app.post("/api/imagine/generate", async (c) => {
         const message = e instanceof Error ? e.message : String(e);
 
         if (isRetryableTokenError(message)) {
+          lastRetryableError = message;
           excludedTokenIds.push(token.id);
           retryCount++;
+          const reason = getRetryableErrorReason(message);
 
           await writeEvent("info", {
             type: "info",
-            message: `Token rate limited, switching to another (attempt ${retryCount}/${MAX_RETRIES})`,
+            message: `Retryable error: ${reason}, switching token (attempt ${retryCount}/${MAX_RETRIES})`,
           });
           continue;
         } else {
@@ -168,6 +194,13 @@ app.post("/api/imagine/generate", async (c) => {
     // Final done event
     if (totalCollected > 0) {
       await writeEvent("done", {});
+    } else if (retryCount >= MAX_RETRIES) {
+      await writeEvent("error", {
+        type: "error",
+        message: lastRetryableError
+          ? `Retry limit reached (${MAX_RETRIES}): ${lastRetryableError}`
+          : `Retry limit reached (${MAX_RETRIES})`,
+      });
     }
     await writer.close();
   })().catch((err) => {
@@ -225,6 +258,7 @@ app.post("/api/video/generate", async (c) => {
   void (async () => {
     const excludedTokenIds: string[] = [];
     let retryCount = 0;
+    let lastRetryableError = "";
 
     while (retryCount < MAX_RETRIES) {
       // Get token (excluding rate-limited ones)
@@ -242,7 +276,7 @@ app.post("/api/video/generate", async (c) => {
         if (excludedTokenIds.length > 0) {
           await writeEvent("error", {
             type: "error",
-            message: `All tokens rate limited (tried ${excludedTokenIds.length} tokens)`,
+            message: `All tokens failed with retryable errors (tried ${excludedTokenIds.length} tokens)`,
           });
         } else {
           await writeEvent("error", {
@@ -255,7 +289,7 @@ app.post("/api/video/generate", async (c) => {
 
       try {
         let completed = false;
-        const effectiveCfClearance = token.cf_clearance || globalCfClearance;
+        const effectiveCfClearance = globalCfClearance || token.cf_clearance;
 
         for await (const update of generateVideo(
           token.sso,
@@ -276,12 +310,14 @@ app.post("/api/video/generate", async (c) => {
 
             // Check for 429 rate limit
             if (isRetryableTokenError(msg)) {
+              lastRetryableError = msg;
               excludedTokenIds.push(token.id);
               retryCount++;
+              const reason = getRetryableErrorReason(msg);
 
               await writeEvent("info", {
                 type: "info",
-                message: `Token rate limited, switching to another (attempt ${retryCount}/${MAX_RETRIES})`,
+                message: `Retryable error: ${reason}, switching token (attempt ${retryCount}/${MAX_RETRIES})`,
               });
 
               break;
@@ -315,12 +351,14 @@ app.post("/api/video/generate", async (c) => {
         const message = e instanceof Error ? e.message : String(e);
 
         if (isRetryableTokenError(message)) {
+          lastRetryableError = message;
           excludedTokenIds.push(token.id);
           retryCount++;
+          const reason = getRetryableErrorReason(message);
 
           await writeEvent("info", {
             type: "info",
-            message: `Token rate limited, switching to another (attempt ${retryCount}/${MAX_RETRIES})`,
+            message: `Retryable error: ${reason}, switching token (attempt ${retryCount}/${MAX_RETRIES})`,
           });
           continue;
         } else {
@@ -331,6 +369,15 @@ app.post("/api/video/generate", async (c) => {
           break;
         }
       }
+    }
+
+    if (retryCount >= MAX_RETRIES) {
+      await writeEvent("error", {
+        type: "error",
+        message: lastRetryableError
+          ? `Retry limit reached (${MAX_RETRIES}): ${lastRetryableError}`
+          : `Retry limit reached (${MAX_RETRIES})`,
+      });
     }
 
     await writer.close();
@@ -378,6 +425,8 @@ app.post("/api/imagine/scroll", async (c) => {
     let retryCount = 0;
     const imagesPerPage = 6;
     const targetCount = max_pages * imagesPerPage;
+    let lastRetryableError = "";
+    let emittedAnyImage = false;
 
     while (retryCount < MAX_RETRIES) {
       const token = await getRandomToken(db, excludedTokenIds);
@@ -386,7 +435,7 @@ app.post("/api/imagine/scroll", async (c) => {
         if (excludedTokenIds.length > 0) {
           await writeEvent("error", {
             type: "error",
-            message: `All tokens rate limited (tried ${excludedTokenIds.length} tokens)`,
+            message: `All tokens failed with retryable errors (tried ${excludedTokenIds.length} tokens)`,
           });
         } else {
           await writeEvent("error", {
@@ -398,7 +447,7 @@ app.post("/api/imagine/scroll", async (c) => {
       }
 
       try {
-        const effectiveCfClearance = token.cf_clearance || globalCfClearance;
+        const effectiveCfClearance = globalCfClearance || token.cf_clearance;
 
         for await (const update of generateImages(
           token.sso,
@@ -414,12 +463,14 @@ app.post("/api/imagine/scroll", async (c) => {
             const msg = update.message;
 
             if (isRetryableTokenError(msg)) {
+              lastRetryableError = msg;
               excludedTokenIds.push(token.id);
               retryCount++;
+              const reason = getRetryableErrorReason(msg);
 
               await writeEvent("info", {
                 type: "info",
-                message: `Token rate limited, switching (attempt ${retryCount}/${MAX_RETRIES})`,
+                message: `Retryable error: ${reason}, switching token (attempt ${retryCount}/${MAX_RETRIES})`,
               });
               break;
             } else {
@@ -428,6 +479,7 @@ app.post("/api/imagine/scroll", async (c) => {
               return;
             }
           } else if (update.type === "image") {
+            emittedAnyImage = true;
             await writeEvent("image", update);
           } else if (update.type === "done") {
             await writeEvent("done", {});
@@ -439,6 +491,7 @@ app.post("/api/imagine/scroll", async (c) => {
         const message = e instanceof Error ? e.message : String(e);
 
         if (isRetryableTokenError(message)) {
+          lastRetryableError = message;
           excludedTokenIds.push(token.id);
           retryCount++;
           continue;
@@ -447,6 +500,15 @@ app.post("/api/imagine/scroll", async (c) => {
           break;
         }
       }
+    }
+
+    if (!emittedAnyImage && retryCount >= MAX_RETRIES) {
+      await writeEvent("error", {
+        type: "error",
+        message: lastRetryableError
+          ? `Retry limit reached (${MAX_RETRIES}): ${lastRetryableError}`
+          : `Retry limit reached (${MAX_RETRIES})`,
+      });
     }
 
     await writeEvent("done", {});

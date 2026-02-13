@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Env } from "../../env";
 import { getRandomToken, getGlobalCfClearance, type TokenRow } from "../../repo/tokens";
+import { parseModelWithRatio, resolveModelInfo, resolveModelInfoWithSync } from "../../grok/models";
 import { generateImages, type ImageUpdate } from "../../grok/imagine";
 import { incrementApiKeyUsage } from "../../repo/api-keys";
 import type { ApiAuthEnv } from "../../middleware/api-auth";
@@ -43,11 +44,34 @@ interface OpenAIErrorResponse {
 // POST /v1/images/generations - OpenAI compatible image generation
 app.post("/generations", async (c) => {
   const body = await c.req.json<OpenAIImageRequest>();
+  const requestedModel = String(body.model || "grok-image");
+  const ttlParsed = Number.parseInt(String(c.env.XAI_MODELS_CACHE_TTL_MS || "").trim(), 10);
+  const ttlMs = Number.isNaN(ttlParsed) || ttlParsed <= 0 ? undefined : ttlParsed;
+  const syncOptions = {
+    apiKey: c.env.XAI_API_KEY,
+    baseUrl: c.env.XAI_BASE_URL,
+    ttlMs,
+  };
+  const resolvedModel = syncOptions.apiKey
+    ? await resolveModelInfoWithSync(requestedModel, "image", syncOptions)
+    : resolveModelInfo(requestedModel, "image");
+
+  if (!resolvedModel) {
+    const errorResponse: OpenAIErrorResponse = {
+      error: {
+        message: `Model '${requestedModel}' not found for image generation`,
+        type: "invalid_request_error",
+        param: "model",
+        code: "model_not_found",
+      },
+    };
+    return c.json(errorResponse, 404);
+  }
 
   const {
     prompt,
     n = 1,
-    size = "1024x1024",
+    size,
     response_format = "url",
   } = body;
 
@@ -64,18 +88,24 @@ app.post("/generations", async (c) => {
     return c.json(errorResponse, 400);
   }
 
-  // Map size to aspect ratio
-  const aspectRatio = SIZE_TO_ASPECT_RATIO[size];
-  if (!aspectRatio) {
-    const errorResponse: OpenAIErrorResponse = {
-      error: {
-        message: `Invalid size: ${size}. Supported sizes: ${Object.keys(SIZE_TO_ASPECT_RATIO).join(", ")}`,
-        type: "invalid_request_error",
-        param: "size",
-        code: "invalid_size",
-      },
-    };
-    return c.json(errorResponse, 400);
+  const parsed = parseModelWithRatio(resolvedModel.model.id);
+  let aspectRatio = parsed.aspectRatio || "1:1";
+
+  // size has higher priority when provided explicitly.
+  if (size) {
+    const fromSize = SIZE_TO_ASPECT_RATIO[size];
+    if (!fromSize) {
+      const errorResponse: OpenAIErrorResponse = {
+        error: {
+          message: `Invalid size: ${size}. Supported sizes: ${Object.keys(SIZE_TO_ASPECT_RATIO).join(", ")}`,
+          type: "invalid_request_error",
+          param: "size",
+          code: "invalid_size",
+        },
+      };
+      return c.json(errorResponse, 400);
+    }
+    aspectRatio = fromSize;
   }
 
   // Validate n
@@ -127,7 +157,7 @@ app.post("/generations", async (c) => {
         aspectRatio,
         true, // enable_nsfw
         token.user_id,
-        token.cf_clearance || globalCfClearance
+        globalCfClearance || token.cf_clearance
       )) {
         if (update.type === "error") {
           const msg = update.message;

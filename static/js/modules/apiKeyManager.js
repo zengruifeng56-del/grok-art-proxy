@@ -1,14 +1,47 @@
 import { api } from '../utils.js';
 
 let allKeys = [];
+let allModels = [];
 
 export async function initApiKeyManager() {
-    // Initial Load
     await loadApiKeys();
 
-    // Event Listeners
     document.getElementById('btn-create-apikey').onclick = createApiKey;
     document.getElementById('btn-copy-apikey').onclick = copyNewKey;
+
+    const btnModelRefresh = document.getElementById('btn-model-refresh');
+    const btnModelResolve = document.getElementById('btn-model-resolve');
+    const btnModelChatTest = document.getElementById('btn-model-chat-test');
+    const modelTypeFilter = document.getElementById('model-type-filter');
+    const modelSelect = document.getElementById('model-select');
+    const modelResolveInput = document.getElementById('model-resolve-input');
+    const modelTestKeyword = document.getElementById('model-test-keyword');
+
+    if (
+        btnModelRefresh &&
+        btnModelResolve &&
+        btnModelChatTest &&
+        modelTypeFilter &&
+        modelSelect &&
+        modelResolveInput &&
+        modelTestKeyword
+    ) {
+        btnModelRefresh.onclick = () => loadModelCatalog(true);
+        btnModelResolve.onclick = resolveModelMapping;
+        btnModelChatTest.onclick = testModelConnectivity;
+        modelTypeFilter.onchange = () => loadModelCatalog(false);
+        modelSelect.onchange = () => {
+            modelResolveInput.value = modelSelect.value || '';
+        };
+        modelResolveInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                resolveModelMapping();
+            }
+        });
+
+        await loadModelCatalog(true);
+    }
 }
 
 async function loadApiKeys() {
@@ -60,6 +93,176 @@ function formatDate(isoString) {
     return d.toLocaleDateString('zh-CN') + ' ' + d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
 }
 
+function getModelTypeFilter() {
+    const el = document.getElementById('model-type-filter');
+    const value = el ? String(el.value || 'all') : 'all';
+    if (value === 'text' || value === 'image' || value === 'video') {
+        return value;
+    }
+    return 'all';
+}
+
+async function loadModelCatalog(forceSync = false) {
+    const btn = document.getElementById('btn-model-refresh');
+    const modelSelect = document.getElementById('model-select');
+    const modelResolveInput = document.getElementById('model-resolve-input');
+    const resultEl = document.getElementById('model-resolve-result');
+
+    if (!modelSelect || !modelResolveInput || !resultEl) return;
+
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '刷新中...';
+    }
+
+    try {
+        const type = getModelTypeFilter();
+        const query = new URLSearchParams();
+        if (type !== 'all') {
+            query.set('type', type);
+        }
+        if (forceSync) {
+            query.set('sync', '1');
+        }
+
+        const url = query.size > 0 ? `/api/models?${query.toString()}` : '/api/models';
+        const data = await api(url);
+        allModels = Array.isArray(data.models) ? data.models : [];
+
+        renderModelOptions(allModels);
+
+        if (allModels.length > 0) {
+            const current = modelSelect.value;
+            if (!current) {
+                modelSelect.value = allModels[0].id;
+            }
+            if (!modelResolveInput.value.trim()) {
+                modelResolveInput.value = modelSelect.value || allModels[0].id;
+            }
+        } else {
+            modelResolveInput.value = '';
+        }
+
+        const hint = {
+            type,
+            total: allModels.length,
+            example: allModels[0]?.id || 'grok-4*',
+            xai: data.xai || null,
+        };
+        resultEl.textContent = JSON.stringify(hint, null, 2);
+    } catch (e) {
+        if (resultEl) {
+            resultEl.textContent = `加载模型目录失败: ${e.message || e}`;
+        }
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = '刷新模型';
+        }
+    }
+}
+
+function renderModelOptions(models) {
+    const modelSelect = document.getElementById('model-select');
+    if (!modelSelect) return;
+
+    modelSelect.innerHTML = '';
+
+    if (!models || models.length === 0) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = '(no models)';
+        modelSelect.appendChild(opt);
+        return;
+    }
+
+    for (const m of models) {
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = `[${m.type}] ${m.id} -> ${m.grok_model} / ${m.model_mode}`;
+        modelSelect.appendChild(opt);
+    }
+}
+
+async function resolveModelMapping() {
+    const inputEl = document.getElementById('model-resolve-input');
+    const resultEl = document.getElementById('model-resolve-result');
+    const btn = document.getElementById('btn-model-resolve');
+
+    if (!inputEl || !resultEl) return;
+
+    const model = String(inputEl.value || '').trim();
+    if (!model) {
+        alert('请输入模型名称或通配符');
+        return;
+    }
+
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '解析中...';
+    }
+
+    try {
+        const type = getModelTypeFilter();
+        const query = new URLSearchParams();
+        query.set('model', model);
+        if (type !== 'all') {
+            query.set('type', type);
+        }
+
+        const data = await api(`/api/models/resolve?${query.toString()}`);
+        const output = {
+            requested: data.requested,
+            resolved: data.resolved,
+            candidates: data.candidates || [],
+        };
+        resultEl.textContent = JSON.stringify(output, null, 2);
+    } catch (e) {
+        resultEl.textContent = `模型映射失败: ${e.message || e}`;
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = '测试映射';
+        }
+    }
+}
+
+async function testModelConnectivity() {
+    const modelResolveInput = document.getElementById('model-resolve-input');
+    const modelSelect = document.getElementById('model-select');
+    const keywordInput = document.getElementById('model-test-keyword');
+    const resultEl = document.getElementById('model-chat-test-result');
+    const btn = document.getElementById('btn-model-chat-test');
+
+    if (!modelResolveInput || !modelSelect || !keywordInput || !resultEl) return;
+
+    const model = String(modelResolveInput.value || modelSelect.value || '').trim();
+    const keyword = String(keywordInput.value || '').trim() || 'MODEL_OK';
+
+    if (!model) {
+        alert('请先选择或输入模型');
+        return;
+    }
+
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '测试中...';
+    }
+    resultEl.textContent = '正在发送短消息进行连通检测...';
+
+    try {
+        const data = await api('/api/models/test', 'POST', { model, keyword });
+        resultEl.textContent = JSON.stringify(data, null, 2);
+    } catch (e) {
+        resultEl.textContent = `模型连通测试失败: ${e.message || e}`;
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = '测试模型对话连通';
+        }
+    }
+}
+
 async function createApiKey() {
     const nameInput = document.getElementById('apikey-name');
     const name = nameInput.value.trim();
@@ -71,16 +274,12 @@ async function createApiKey() {
     try {
         const res = await api('/api/keys', 'POST', { name });
         if (res.success && res.key) {
-            // Show new key
             const display = document.getElementById('new-apikey-display');
             const valueEl = document.getElementById('new-apikey-value');
             valueEl.textContent = res.key.key;
             display.style.display = 'block';
 
-            // Clear input
             nameInput.value = '';
-
-            // Reload list
             await loadApiKeys();
         } else {
             alert('创建失败: ' + (res.error || '未知错误'));
@@ -97,7 +296,7 @@ function copyNewKey() {
     const keyValue = document.getElementById('new-apikey-value').textContent;
     navigator.clipboard.writeText(keyValue).then(() => {
         const btn = document.getElementById('btn-copy-apikey');
-        btn.textContent = '已复制!';
+        btn.textContent = '已复制';
         setTimeout(() => {
             btn.textContent = '复制密钥';
         }, 2000);
@@ -106,7 +305,6 @@ function copyNewKey() {
     });
 }
 
-// Global functions for inline onclick handlers
 window.deleteApiKey = async (id) => {
     if (!confirm('确定删除此 API 密钥？删除后使用该密钥的服务将无法访问')) return;
     try {

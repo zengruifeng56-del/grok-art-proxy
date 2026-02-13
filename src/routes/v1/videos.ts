@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Env } from "../../env";
 import { getRandomToken, getGlobalCfClearance, type TokenRow } from "../../repo/tokens";
+import { parseModelWithRatio, resolveModelInfo, resolveModelInfoWithSync } from "../../grok/models";
 import { generateVideo, type VideoUpdate } from "../../grok/video";
 import { incrementApiKeyUsage } from "../../repo/api-keys";
 import type { ApiAuthEnv } from "../../middleware/api-auth";
@@ -70,10 +71,24 @@ function extractPostIdFromUrl(imageUrl: string): string | null {
 // POST /v1/videos/generations
 app.post("/generations", async (c) => {
   const body = await c.req.json<VideoGenerationRequest>();
+  const requestedModel = String(body.model || "grok-video");
+  const ttlParsed = Number.parseInt(String(c.env.XAI_MODELS_CACHE_TTL_MS || "").trim(), 10);
+  const ttlMs = Number.isNaN(ttlParsed) || ttlParsed <= 0 ? undefined : ttlParsed;
+  const syncOptions = {
+    apiKey: c.env.XAI_API_KEY,
+    baseUrl: c.env.XAI_BASE_URL,
+    ttlMs,
+  };
+  const resolvedModel = syncOptions.apiKey
+    ? await resolveModelInfoWithSync(requestedModel, "video", syncOptions)
+    : resolveModelInfo(requestedModel, "video");
 
   // Validate required fields
   if (!body.image_url) {
     return createErrorResponse("image_url is required", 400);
+  }
+  if (!resolvedModel) {
+    return createErrorResponse(`Model '${requestedModel}' not found for video generation`, 404);
   }
 
   const {
@@ -104,6 +119,7 @@ app.post("/generations", async (c) => {
   let retryCount = 0;
   let videoUrl: string | null = null;
   let lastError = "";
+  const { aspectRatio } = parseModelWithRatio(resolvedModel.model.id);
 
   while (retryCount < MAX_RETRIES) {
     const token: TokenRow | null = await getRandomToken(db, excludedTokenIds);
@@ -125,14 +141,11 @@ app.post("/generations", async (c) => {
       // Use extracted postId or empty string (generateVideo will create one)
       const actualPostId = postId || "";
 
-      // Determine aspect ratio from resolution (default to square for video)
-      const aspectRatio = "1:1";
-
       for await (const update of generateVideo(
         token.sso,
         token.sso_rw,
         token.user_id,
-        token.cf_clearance || globalCfClearance,
+        globalCfClearance || token.cf_clearance,
         token.id,
         image_url,
         prompt,

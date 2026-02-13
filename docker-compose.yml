@@ -11,6 +11,9 @@ services:
       AUTH_USERNAME: ${AUTH_USERNAME:-admin}
       AUTH_PASSWORD: ${AUTH_PASSWORD:-change_me}
       VIDEO_POSTER_PREVIEW: ${VIDEO_POSTER_PREVIEW:-true}
+      XAI_API_KEY: ${XAI_API_KEY:-}
+      XAI_BASE_URL: ${XAI_BASE_URL:-https://api.x.ai/v1}
+      XAI_MODELS_CACHE_TTL_MS: ${XAI_MODELS_CACHE_TTL_MS:-300000}
       BUILD_SHA: ${BUILD_SHA:-docker}
     volumes:
       - ./data:/app/data

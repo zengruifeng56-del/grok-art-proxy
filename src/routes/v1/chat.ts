@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { streamChat } from "../../grok/chat";
 import { getRandomToken, getGlobalCfClearance } from "../../repo/tokens";
 import { incrementApiKeyUsage } from "../../repo/api-keys";
-import { getModelInfo } from "../../grok/models";
+import { resolveModelInfo, resolveModelInfoWithSync } from "../../grok/models";
 import type { ApiAuthEnv } from "../../middleware/api-auth";
 
 const app = new Hono<ApiAuthEnv>();
@@ -98,13 +98,27 @@ function sseChunk(
 app.post("/completions", async (c) => {
   const body = await c.req.json<ChatCompletionRequest>();
 
-  const { model, messages, stream = false } = body;
+  const { model: requestedModel, messages, stream = false } = body;
+
+  const ttlParsed = Number.parseInt(String(c.env.XAI_MODELS_CACHE_TTL_MS || "").trim(), 10);
+  const ttlMs = Number.isNaN(ttlParsed) || ttlParsed <= 0 ? undefined : ttlParsed;
+  const syncOptions = {
+    apiKey: c.env.XAI_API_KEY,
+    baseUrl: c.env.XAI_BASE_URL,
+    ttlMs,
+  };
 
   // Validate model
-  const modelInfo = getModelInfo(model);
-  if (!modelInfo) {
-    return createErrorResponse(`Model '${model}' not found`, 404);
+  const resolvedModel = syncOptions.apiKey
+    ? await resolveModelInfoWithSync(requestedModel, undefined, syncOptions)
+    : resolveModelInfo(requestedModel);
+  if (!resolvedModel) {
+    return createErrorResponse(
+      `Model '${requestedModel}' not found. 支持精确ID或通配符，例如 grok-4*`,
+      404
+    );
   }
+  const model = resolvedModel.model.id;
 
   // Validate messages
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
@@ -135,6 +149,7 @@ app.post("/completions", async (c) => {
         controller.enqueue(encoder.encode(sseChunk(responseId, model, "", "assistant", null)));
 
         let success = false;
+        let lastRetryableError = "";
 
         while (retryCount < MAX_RETRIES) {
           const token = await getRandomToken(db, excludedTokenIds);
@@ -158,6 +173,7 @@ app.post("/completions", async (c) => {
 
           let shouldRetry = false;
           let terminalError = "";
+          let gotTokenInThisAttempt = false;
 
           try {
             for await (const update of streamChat(
@@ -170,7 +186,7 @@ app.post("/completions", async (c) => {
               baseUrl, // baseUrl for building full proxy URLs
               posterPreview, // video poster preview
               token.user_id,
-              token.cf_clearance || globalCfClearance
+              globalCfClearance || token.cf_clearance
             )) {
               if (update.type === "error") {
                 const msg = update.message || "";
@@ -179,6 +195,7 @@ app.post("/completions", async (c) => {
                     excludedTokenIds.push(token.id);
                   }
                   retryCount++;
+                  lastRetryableError = msg;
                   shouldRetry = true;
                   break;
                 }
@@ -190,10 +207,20 @@ app.post("/completions", async (c) => {
               }
 
               if (update.type === "token" && update.content) {
+                gotTokenInThisAttempt = true;
                 controller.enqueue(encoder.encode(sseChunk(responseId, model, update.content)));
               }
 
               if (update.type === "done") {
+                if (!gotTokenInThisAttempt) {
+                  if (!excludedTokenIds.includes(token.id)) {
+                    excludedTokenIds.push(token.id);
+                  }
+                  retryCount++;
+                  lastRetryableError = "Upstream returned empty response";
+                  shouldRetry = true;
+                  break;
+                }
                 success = true;
                 break;
               }
@@ -217,6 +244,7 @@ app.post("/completions", async (c) => {
                 excludedTokenIds.push(token.id);
               }
               retryCount++;
+              lastRetryableError = message;
               continue;
             }
             controller.enqueue(
@@ -224,6 +252,12 @@ app.post("/completions", async (c) => {
             );
             break;
           }
+        }
+
+        if (!success && lastRetryableError) {
+          controller.enqueue(
+            encoder.encode(sseChunk(responseId, model, `[Error: ${lastRetryableError}]`, null, null))
+          );
         }
 
         // Send finish chunk
@@ -267,6 +301,7 @@ app.post("/completions", async (c) => {
     }
 
     let shouldRetry = false;
+    let gotTokenInThisAttempt = false;
 
     try {
       for await (const update of streamChat(
@@ -279,7 +314,7 @@ app.post("/completions", async (c) => {
         baseUrl, // baseUrl for building full proxy URLs
         posterPreview, // video poster preview
         token.user_id,
-        token.cf_clearance || globalCfClearance
+        globalCfClearance || token.cf_clearance
       )) {
         if (update.type === "error") {
           const msg = update.message || "";
@@ -296,10 +331,20 @@ app.post("/completions", async (c) => {
         }
 
         if (update.type === "token" && update.content) {
+          gotTokenInThisAttempt = true;
           fullContent += update.content;
         }
 
         if (update.type === "done") {
+          if (!gotTokenInThisAttempt) {
+            if (!excludedTokenIds.includes(token.id)) {
+              excludedTokenIds.push(token.id);
+            }
+            retryCount++;
+            lastError = "Upstream returned empty response";
+            shouldRetry = true;
+            break;
+          }
           success = true;
           break;
         }

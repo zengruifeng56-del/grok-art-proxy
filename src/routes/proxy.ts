@@ -61,7 +61,7 @@ proxyRoutes.get("/api/proxy/assets/*", async (c) => {
     token.sso,
     token.sso_rw,
     token.user_id,
-    token.cf_clearance || globalCfClearance
+    globalCfClearance || token.cf_clearance
   );
 
   try {
@@ -130,7 +130,7 @@ proxyRoutes.get("/api/proxy/video", async (c) => {
     token.sso,
     token.sso_rw,
     token.user_id,
-    token.cf_clearance || globalCfClearance
+    globalCfClearance || token.cf_clearance
   );
 
   try {

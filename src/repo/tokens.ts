@@ -39,6 +39,19 @@ export interface TokenExport {
   cf_clearance: string;
 }
 
+function normalizeCfClearance(value: string): string {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  // Support full Cookie header or "cf_clearance=..." input.
+  const cookieMatch = raw.match(/(?:^|;\s*)cf_clearance=([^;]+)/i);
+  if (cookieMatch?.[1]) {
+    return cookieMatch[1].trim();
+  }
+
+  return raw.replace(/^cf_clearance=/i, "").split(";")[0]?.trim() || "";
+}
+
 function generateTokenId(sso: string): string {
   return md5(sso);
 }
@@ -357,7 +370,7 @@ export async function getGlobalCfClearance(db: Env["DB"]): Promise<string> {
   );
 
   if (direct?.value) {
-    return String(direct.value).trim();
+    return normalizeCfClearance(String(direct.value));
   }
 
   // Backward compatibility: support legacy JSON settings payload.
@@ -373,14 +386,14 @@ export async function getGlobalCfClearance(db: Env["DB"]): Promise<string> {
 
   try {
     const parsed = JSON.parse(legacy.value) as Record<string, unknown>;
-    return String(parsed.cf_clearance || "").trim();
+    return normalizeCfClearance(String(parsed.cf_clearance || ""));
   } catch {
     return "";
   }
 }
 
 export async function setGlobalCfClearance(db: Env["DB"], cfClearance: string): Promise<void> {
-  const value = cfClearance.trim();
+  const value = normalizeCfClearance(cfClearance);
   const now = nowMs();
   await dbRun(
     db,
