@@ -1,5 +1,5 @@
 name = "grok-art-proxy"
-main = "src/index.ts"
+main = "src/worker.ts"
 compatibility_date = "2024-12-01"
 
 # Static assets (frontend UI)
@@ -23,6 +23,8 @@ id = "bb4133f909534054aabaf3f59b9bbf5c"
 BUILD_SHA = "dev"
 KV_CACHE_MAX_BYTES = "26214400"
 VIDEO_POSTER_PREVIEW = "true"
+XAI_BASE_URL = "https://api.x.ai/v1"
+XAI_MODELS_CACHE_TTL_MS = "300000"
 
 # Authentication - set via Cloudflare Dashboard or wrangler secret:
 #   npx wrangler secret put AUTH_USERNAME

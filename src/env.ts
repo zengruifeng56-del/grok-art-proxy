@@ -1,7 +1,12 @@
 import type { DbClient } from "./db-client";
 
+export interface AssetBinding {
+  fetch(request: Request): Promise<Response>;
+}
+
 export interface Env {
   DB: DbClient;
+  ASSETS?: AssetBinding;
   BUILD_SHA?: string;
   AUTH_USERNAME?: string;
   AUTH_PASSWORD?: string;

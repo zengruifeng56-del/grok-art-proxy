@@ -135,6 +135,7 @@ app.get("/api/models", async (c) => {
       sync_error: syncResult?.error || "",
       remote_count: cacheState.ids.length,
       updated_at: cacheState.updatedAt,
+      last_attempt_at: cacheState.lastAttemptAt,
     },
   });
 });
@@ -185,6 +186,7 @@ app.get("/api/models/resolve", async (c) => {
     xai: {
       enabled: Boolean(syncOptions.apiKey),
       remote_count: getXaiModelCacheState().ids.length,
+      last_attempt_at: getXaiModelCacheState().lastAttemptAt,
     },
   });
 });

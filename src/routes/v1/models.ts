@@ -74,6 +74,7 @@ app.get("/", (c) => {
         sync_error: syncResult?.error || "",
         remote_count: cacheState.ids.length,
         updated_at: cacheState.updatedAt,
+        last_attempt_at: cacheState.lastAttemptAt,
       },
     });
   };

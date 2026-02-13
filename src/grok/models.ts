@@ -54,6 +54,7 @@ export interface ModelCatalogListOptions {
 interface XaiModelCacheState {
   ids: string[];
   updatedAt: number;
+  lastAttemptAt: number;
   lastError: string;
   lastStatus: number;
 }
@@ -69,6 +70,7 @@ const DEFAULT_XAI_TTL_MS = 5 * 60 * 1000;
 const xaiModelCache: XaiModelCacheState = {
   ids: [],
   updatedAt: 0,
+  lastAttemptAt: 0,
   lastError: "",
   lastStatus: 0,
 };
@@ -451,12 +453,14 @@ function parseXaiModelIds(payload: unknown): string[] {
 export function getXaiModelCacheState(): {
   ids: string[];
   updatedAt: number | null;
+  lastAttemptAt: number | null;
   lastError: string;
   lastStatus: number;
 } {
   return {
     ids: [...xaiModelCache.ids],
     updatedAt: xaiModelCache.updatedAt || null,
+    lastAttemptAt: xaiModelCache.lastAttemptAt || null,
     lastError: xaiModelCache.lastError,
     lastStatus: xaiModelCache.lastStatus,
   };
@@ -478,23 +482,31 @@ export async function syncXaiModels(options: XaiModelSyncOptions = {}): Promise<
   }
 
   const now = Date.now();
-  if (
-    !force &&
-    xaiModelCache.ids.length > 0 &&
-    xaiModelCache.updatedAt > 0 &&
-    now - xaiModelCache.updatedAt < ttlMs
-  ) {
-    return {
-      ok: true,
-      fromCache: true,
-      ids: [...xaiModelCache.ids],
-      updatedAt: xaiModelCache.updatedAt,
-      status: xaiModelCache.lastStatus || 200,
-    };
+  if (!force && xaiModelCache.lastAttemptAt > 0 && now - xaiModelCache.lastAttemptAt < ttlMs) {
+    if (xaiModelCache.ids.length > 0 && xaiModelCache.updatedAt > 0) {
+      return {
+        ok: true,
+        fromCache: true,
+        ids: [...xaiModelCache.ids],
+        updatedAt: xaiModelCache.updatedAt,
+        status: xaiModelCache.lastStatus || 200,
+      };
+    }
+    if (xaiModelCache.lastError) {
+      return {
+        ok: false,
+        fromCache: true,
+        ids: [...xaiModelCache.ids],
+        updatedAt: xaiModelCache.updatedAt || null,
+        status: xaiModelCache.lastStatus || 0,
+        error: xaiModelCache.lastError,
+      };
+    }
   }
 
   const baseUrl = normalizeBaseUrl(options.baseUrl);
   try {
+    xaiModelCache.lastAttemptAt = Date.now();
     const response = await fetch(`${baseUrl}/models`, {
       method: "GET",
       headers: {
@@ -507,6 +519,7 @@ export async function syncXaiModels(options: XaiModelSyncOptions = {}): Promise<
     if (!response.ok) {
       const text = await response.text().catch(() => "");
       const error = `x.ai models sync failed: HTTP ${status}${text ? ` - ${text.slice(0, 200)}` : ""}`;
+      xaiModelCache.lastAttemptAt = Date.now();
       xaiModelCache.lastError = error;
       xaiModelCache.lastStatus = status;
       return {
@@ -523,6 +536,7 @@ export async function syncXaiModels(options: XaiModelSyncOptions = {}): Promise<
     const ids = parseXaiModelIds(payload);
     xaiModelCache.ids = ids;
     xaiModelCache.updatedAt = Date.now();
+    xaiModelCache.lastAttemptAt = xaiModelCache.updatedAt;
     xaiModelCache.lastError = "";
     xaiModelCache.lastStatus = status;
 
@@ -535,6 +549,7 @@ export async function syncXaiModels(options: XaiModelSyncOptions = {}): Promise<
     };
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
+    xaiModelCache.lastAttemptAt = Date.now();
     xaiModelCache.lastError = `x.ai models sync error: ${error}`;
     xaiModelCache.lastStatus = 0;
     return {
