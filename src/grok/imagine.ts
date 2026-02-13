@@ -1,7 +1,7 @@
 import { getWebSocketHeaders, buildCookie } from "./headers";
-import WebSocket, { type RawData } from "ws";
 
 const WS_URL = "wss://grok.com/ws/imagine/listen";
+const WS_UPGRADE_URL = WS_URL.replace("wss://", "https://");
 
 export interface ImageResult {
   job_id: string;
@@ -110,35 +110,170 @@ interface WsMessage {
   message?: string;
 }
 
-async function connectAndReceive(
+interface CollectorState {
+  results: ImageResult[];
+  receivedImages: Map<string, ImageResult>;
+  completedJobs: Set<string>;
+  failedJobs: Set<string>;
+  emittedJobs: Set<string>;
+}
+
+interface WorkerUpgradeWebSocket extends WebSocket {
+  accept(): void;
+}
+
+function createCollectorState(): CollectorState {
+  return {
+    results: [],
+    receivedImages: new Map<string, ImageResult>(),
+    completedJobs: new Set<string>(),
+    failedJobs: new Set<string>(),
+    emittedJobs: new Set<string>(),
+  };
+}
+
+function handleWsPayload(
+  payloadText: string,
+  state: CollectorState,
+  rejectOnce: (error: Error) => void,
+  resolveOnce: (value: ImageResult[]) => void
+) {
+  try {
+    const data: WsMessage = JSON.parse(payloadText);
+    const msgType = data.type;
+
+    if (msgType === "json") {
+      const jobId = data.job_id || "";
+      const status = data.current_status || "";
+      const percentage = data.percentage_complete || 0;
+
+      if (status === "completed" && percentage >= 100) {
+        state.completedJobs.add(jobId);
+      } else if (status === "error") {
+        state.failedJobs.add(jobId);
+      }
+    } else if (msgType === "image") {
+      const jobId = data.job_id || "";
+      const blob = data.blob || "";
+      const url = data.url || "";
+      const blobLen = blob.length;
+
+      if (jobId) {
+        const existing = state.receivedImages.get(jobId);
+        const existingBlobLen = existing?.blob?.length || 0;
+        const isFullImage = blobLen > 100000 || url.endsWith(".jpg");
+
+        if (!existing || blobLen > existingBlobLen) {
+          const result: ImageResult = {
+            job_id: jobId,
+            request_id: data.request_id || "",
+            url: url,
+            blob: blob,
+            prompt: data.prompt || "",
+            full_prompt: data.full_prompt || "",
+            width: data.width || 0,
+            height: data.height || 0,
+            model_name: data.model_name || "",
+            grid_index: data.grid_index || 0,
+            order: data.order || 0,
+            r_rated: data.r_rated || false,
+            moderated: data.moderated || false,
+          };
+          state.receivedImages.set(jobId, result);
+
+          if (isFullImage && !result.moderated && !state.emittedJobs.has(jobId)) {
+            state.emittedJobs.add(jobId);
+            state.results.push(result);
+          }
+        }
+      }
+    } else if (msgType === "error") {
+      rejectOnce(new Error(data.message || "Unknown error"));
+      return;
+    }
+
+    const totalDone = state.completedJobs.size + state.failedJobs.size;
+    if (totalDone >= 6) {
+      setTimeout(() => resolveOnce(state.results), 300);
+    }
+  } catch {
+    // Ignore parse errors
+  }
+}
+
+function isWorkerRuntime(): boolean {
+  const g = globalThis as Record<string, unknown>;
+  return typeof g.WebSocketPair === "function";
+}
+
+function closeIfOpen(
+  ws: { readyState: number; close: () => void },
+  openState: number,
+  connectingState: number
+) {
+  if (ws.readyState === openState || ws.readyState === connectingState) {
+    ws.close();
+  }
+}
+
+async function workerMessageToText(data: unknown): Promise<string> {
+  if (typeof data === "string") return data;
+  if (data instanceof ArrayBuffer) return new TextDecoder().decode(new Uint8Array(data));
+  if (ArrayBuffer.isView(data)) {
+    return new TextDecoder().decode(
+      new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+    );
+  }
+  if (typeof Blob !== "undefined" && data instanceof Blob) {
+    return data.text();
+  }
+  return String(data ?? "");
+}
+
+function nodeRawToText(raw: import("ws").RawData): string {
+  if (typeof raw === "string") return raw;
+  if (raw instanceof ArrayBuffer) return Buffer.from(raw).toString("utf8");
+  if (Array.isArray(raw)) return Buffer.concat(raw.map((part) => Buffer.from(part))).toString("utf8");
+  return raw.toString("utf8");
+}
+
+async function connectAndReceiveWorker(
   sso: string,
   sso_rw: string,
   prompt: string,
   aspectRatio: string,
   enableNsfw: boolean,
   isScroll: boolean,
-  timeoutMs: number = 30000,
-  user_id: string = "",
-  cf_clearance: string = ""
+  timeoutMs: number,
+  user_id: string,
+  cf_clearance: string
 ): Promise<ImageResult[]> {
   const cookie = buildCookie(sso, sso_rw, user_id, cf_clearance);
   const headers = getWebSocketHeaders(cookie);
+
+  const response = await fetch(WS_UPGRADE_URL, {
+    headers: {
+      ...headers,
+      Upgrade: "websocket",
+    },
+  });
+
+  const ws = (response as Response & { webSocket?: WorkerUpgradeWebSocket }).webSocket;
+  if (!ws) {
+    throw new Error(`WebSocket upgrade failed: HTTP ${response.status}`);
+  }
+  ws.accept();
+  ws.send(JSON.stringify(buildRequest(prompt, aspectRatio, enableNsfw, isScroll)));
+
   return new Promise((resolve, reject) => {
-    const results: ImageResult[] = [];
-    const receivedImages: Map<string, ImageResult> = new Map();
-    const completedJobs = new Set<string>();
-    const failedJobs = new Set<string>();
-    const emittedJobs = new Set<string>();
-    const ws = new WebSocket(WS_URL, { headers });
+    const state = createCollectorState();
     let settled = false;
 
     const resolveOnce = (value: ImageResult[]) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-        ws.close();
-      }
+      closeIfOpen(ws, 1, 0);
       resolve(value);
     };
 
@@ -146,91 +281,79 @@ async function connectAndReceive(
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-        ws.close();
-      }
+      closeIfOpen(ws, 1, 0);
       reject(error);
     };
 
-    const timeout = setTimeout(() => {
-      resolveOnce(results);
-    }, timeoutMs);
+    const timeout = setTimeout(() => resolveOnce(state.results), timeoutMs);
 
-    ws.on("open", () => {
-      const request = buildRequest(prompt, aspectRatio, enableNsfw, isScroll);
-      ws.send(JSON.stringify(request));
+    ws.addEventListener("message", (event: MessageEvent) => {
+      void workerMessageToText(event.data).then((text) => {
+        handleWsPayload(text, state, rejectOnce, resolveOnce);
+      });
     });
 
-    ws.on("message", (raw: RawData) => {
-      try {
-        const data: WsMessage = JSON.parse(rawToText(raw));
-        const msgType = data.type;
+    ws.addEventListener("error", () => {
+      rejectOnce(new Error("WebSocket error"));
+    });
 
-        if (msgType === "json") {
-          const jobId = data.job_id || "";
-          const status = data.current_status || "";
-          const percentage = data.percentage_complete || 0;
-
-          if (status === "completed" && percentage >= 100) {
-            completedJobs.add(jobId);
-          } else if (status === "error") {
-            failedJobs.add(jobId);
-          }
-        } else if (msgType === "image") {
-          const jobId = data.job_id || "";
-          const blob = data.blob || "";
-          const url = data.url || "";
-          const blobLen = blob.length;
-
-          if (jobId) {
-            const existing = receivedImages.get(jobId);
-            const existingBlobLen = existing?.blob?.length || 0;
-
-            // Check if this is a full image (blob > 100KB or URL ends with .jpg)
-            const isFullImage = blobLen > 100000 || url.endsWith(".jpg");
-
-            // Update to larger blob
-            if (!existing || blobLen > existingBlobLen) {
-              const result: ImageResult = {
-                job_id: jobId,
-                request_id: data.request_id || "",
-                url: url,
-                blob: blob,
-                prompt: data.prompt || "",
-                full_prompt: data.full_prompt || "",
-                width: data.width || 0,
-                height: data.height || 0,
-                model_name: data.model_name || "",
-                grid_index: data.grid_index || 0,
-                order: data.order || 0,
-                r_rated: data.r_rated || false,
-                moderated: data.moderated || false,
-              };
-              receivedImages.set(jobId, result);
-
-              // Only add to results when we receive full image
-              if (isFullImage && !result.moderated && !emittedJobs.has(jobId)) {
-                emittedJobs.add(jobId);
-                results.push(result);
-              }
-            }
-          }
-        } else if (msgType === "error") {
-          const errorMsg = data.message || "Unknown error";
-          rejectOnce(new Error(errorMsg));
-          return;
-        }
-
-        // Check if batch is done (6 jobs completed or failed)
-        const totalDone = completedJobs.size + failedJobs.size;
-        if (totalDone >= 6) {
-          setTimeout(() => {
-            resolveOnce(results);
-          }, 300);
-        }
-      } catch {
-        // Ignore parse errors
+    ws.addEventListener("close", (event: CloseEvent) => {
+      if (settled) return;
+      if (event.code === 1008 || event.code === 429) {
+        rejectOnce(new Error("Rate limited (429)"));
+      } else {
+        resolveOnce(state.results);
       }
+    });
+  });
+}
+
+async function connectAndReceiveNode(
+  sso: string,
+  sso_rw: string,
+  prompt: string,
+  aspectRatio: string,
+  enableNsfw: boolean,
+  isScroll: boolean,
+  timeoutMs: number,
+  user_id: string,
+  cf_clearance: string
+): Promise<ImageResult[]> {
+  const wsModule = await import("ws");
+  const NodeWebSocket = wsModule.default;
+
+  const cookie = buildCookie(sso, sso_rw, user_id, cf_clearance);
+  const headers = getWebSocketHeaders(cookie);
+
+  return new Promise((resolve, reject) => {
+    const state = createCollectorState();
+    const ws = new NodeWebSocket(WS_URL, { headers });
+    let settled = false;
+
+    const resolveOnce = (value: ImageResult[]) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      closeIfOpen(ws, NodeWebSocket.OPEN, NodeWebSocket.CONNECTING);
+      resolve(value);
+    };
+
+    const rejectOnce = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      closeIfOpen(ws, NodeWebSocket.OPEN, NodeWebSocket.CONNECTING);
+      reject(error);
+    };
+
+    const timeout = setTimeout(() => resolveOnce(state.results), timeoutMs);
+
+    ws.on("open", () => {
+      ws.send(JSON.stringify(buildRequest(prompt, aspectRatio, enableNsfw, isScroll)));
+    });
+
+    ws.on("message", (raw: import("ws").RawData) => {
+      handleWsPayload(nodeRawToText(raw), state, rejectOnce, resolveOnce);
     });
 
     ws.on("error", () => {
@@ -242,17 +365,48 @@ async function connectAndReceive(
       if (code === 1008 || code === 429) {
         rejectOnce(new Error("Rate limited (429)"));
       } else {
-        resolveOnce(results);
+        resolveOnce(state.results);
       }
     });
   });
 }
 
-function rawToText(raw: RawData): string {
-  if (typeof raw === "string") return raw;
-  if (raw instanceof ArrayBuffer) return Buffer.from(raw).toString("utf8");
-  if (Array.isArray(raw)) return Buffer.concat(raw.map((part) => Buffer.from(part))).toString("utf8");
-  return raw.toString("utf8");
+async function connectAndReceive(
+  sso: string,
+  sso_rw: string,
+  prompt: string,
+  aspectRatio: string,
+  enableNsfw: boolean,
+  isScroll: boolean,
+  timeoutMs: number = 30000,
+  user_id: string = "",
+  cf_clearance: string = ""
+): Promise<ImageResult[]> {
+  if (isWorkerRuntime()) {
+    return connectAndReceiveWorker(
+      sso,
+      sso_rw,
+      prompt,
+      aspectRatio,
+      enableNsfw,
+      isScroll,
+      timeoutMs,
+      user_id,
+      cf_clearance
+    );
+  }
+
+  return connectAndReceiveNode(
+    sso,
+    sso_rw,
+    prompt,
+    aspectRatio,
+    enableNsfw,
+    isScroll,
+    timeoutMs,
+    user_id,
+    cf_clearance
+  );
 }
 
 export async function* generateImages(

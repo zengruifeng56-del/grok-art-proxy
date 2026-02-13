@@ -1,21 +1,17 @@
 const BASE_HEADERS: Record<string, string> = {
   Accept: "*/*",
-  "Accept-Encoding": "gzip, deflate, br, zstd",
+  "Accept-Encoding": "gzip, deflate, br",
   "Accept-Language": "zh-CN,zh;q=0.9",
-  "Baggage": "sentry-environment=production,sentry-release=d6add6fb0460641fd482d767a335ef72b9b6abb8,sentry-public_key=b311e0f2690c81f25e2c4cf6d4f7ce1c",
   "Cache-Control": "no-cache",
   Origin: "https://grok.com",
   Pragma: "no-cache",
   Priority: "u=1, i",
   Referer: "https://grok.com/",
   "User-Agent":
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
-  "Sec-Ch-Ua": '"Google Chrome";v="136", "Chromium";v="136", "Not(A:Brand";v="24"',
-  "Sec-Ch-Ua-Arch": "arm",
-  "Sec-Ch-Ua-Bitness": "64",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+  "Sec-Ch-Ua": '"Chromium";v="136", "Google Chrome";v="136", "Not(A:Brand";v="24"',
   "Sec-Ch-Ua-Mobile": "?0",
-  "Sec-Ch-Ua-Model": "",
-  "Sec-Ch-Ua-Platform": '"macOS"',
+  "Sec-Ch-Ua-Platform": '"Windows"',
   "Sec-Fetch-Dest": "empty",
   "Sec-Fetch-Mode": "cors",
   "Sec-Fetch-Site": "same-origin",
@@ -63,7 +59,7 @@ export function getWebSocketHeaders(cookie: string): Record<string, string> {
     Pragma: "no-cache",
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
     "Accept-Encoding": "gzip, deflate, br",
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
   };
 }
 
